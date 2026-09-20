@@ -76,7 +76,10 @@ vhost_enc() {
   if [ "$VHOST" = "/" ]; then printf '%%2F'; else printf '%s' "${VHOST//\//%2F}"; fi
 }
 
-pretty() { if command -v jq >/dev/null; then jq "${1:-.}"; else cat; fi; }
+# Pretty-print stdin as JSON when jq is available, pass it through when not.
+# No filter argument: every caller wants the whole document, and an optional
+# parameter nothing passes is one shellcheck rightly objects to (SC2120).
+pretty() { if command -v jq >/dev/null; then jq .; else cat; fi; }
 
 # ---------------------------------------------------------------- up / down
 
