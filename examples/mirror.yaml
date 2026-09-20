@@ -1,0 +1,96 @@
+# A mirror: everything published to blue is COPIED to green, and nothing moves.
+#
+# This is an observation, not a cutover. It has no semantics, because nothing
+# is moved and there is no ambiguous window; and no rollback, because nothing
+# happened. Blue stays authoritative throughout.
+#
+# EXCHANGE federation, and the word matters. A federated QUEUE pulls from its
+# upstream only when the upstream has no local consumers -- a conditional move,
+# not a copy -- so a mirror built from queue federation sits empty while blue is
+# healthy and starts draining blue the moment it is not. A federated EXCHANGE
+# replays what is published upstream into its own bound queues, which is the
+# copy. The validator rejects a mirror block naming queues.
+# docs/message-state.md.
+#
+# Two honest limits, both in docs/canary.md:
+#
+#   * it doubles the traffic and the storage, which is what falls over on a
+#     cluster sized for its normal load;
+#   * it only tests what is safe to do twice. Green's consumers must be in
+#     shadow mode -- doing the work and discarding the result. The tool CANNOT
+#     check that, and prints this warning on every mirror plan. Run it against
+#     consumers that write to a shared database and you have built the
+#     duplicate-delivery machine docs/canary.md refuses.
+---
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: orders-shadow-mirror
+
+clusters:
+  blue:
+    management: ${BLUE_MGMT_URL}
+    amqp:       ${BLUE_AMQP_URL}
+    vhost:      /orders
+    username:   ${BLUE_USERNAME}
+    password:   ${BLUE_PASSWORD}
+  green:
+    management: ${GREEN_MGMT_URL}
+    amqp:       ${GREEN_AMQP_URL}
+    vhost:      /orders
+    username:   ${GREEN_USERNAME}
+    password:   ${GREEN_PASSWORD}
+
+provider: rabbitmq
+
+endpoint:
+  # Nothing switches. Named anyway, so the plan can say so rather than leaving
+  # a reader to wonder whether this file cuts anything over.
+  kind: external
+  description: >
+    No endpoint change. Blue remains authoritative for the whole of this
+    operation; green receives a copy and must not be routed to.
+
+deployment:
+  operation: mirror
+  from: blue
+  to: green
+
+  mirror:
+    exchanges: ["orders"]
+    upstream:
+      uri: ${BLUE_AMQP_URL}
+      prefetch: 1000
+      ackMode: onConfirm
+
+  steps:
+    - id: probe
+      requires:
+        - TOPOLOGY_EXPORT
+        - TOPOLOGY_IMPORT_MERGE
+        - MIRROR_BY_FEDERATION
+
+    - id: topology
+      copyTopology:
+        from: blue
+        to: green
+        vhosts: ["/orders"]
+        include: [exchanges, queues, bindings, users, permissions]
+        exclude: [policies, operatorPolicies]
+
+    - id: start-mirror
+      mirror:
+        from: blue
+        to: green
+        exchanges: ["orders"]
+
+    # Green should track blue within a few seconds of steady state. A mirror
+    # that never catches up is a green cluster that cannot carry the load, which
+    # is exactly the thing this operation exists to find out.
+    - id: observe
+      waitFor:
+        on: green
+        consumers:
+          min: 1
+        timeout: 10m
+        onTimeout: continue

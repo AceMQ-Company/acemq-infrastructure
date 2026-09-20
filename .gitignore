@@ -1,0 +1,21 @@
+# The documentation site is built, not committed. CI renders it from docs/ and
+# deploys it to Pages; a checked-in copy would only give the two a chance to
+# disagree.
+/site/
+
+# The lab writes backups here when you point the documented backup path at a
+# local run. They are definitions documents, which carry password hashes.
+/backups/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+.DS_Store
+*.log
+.env
+.idea/
+*.iml
+.vscode/

@@ -1,0 +1,69 @@
+# Build the documentation site and publish it to GitHub Pages.
+#
+# The site is the markdown under docs/ rendered to HTML. There is no generated
+# API reference to fold in, because there is no API yet -- see docs/roadmap.md.
+# When there is, the javadoc goes under site/apidocs/ and the build script gains
+# a step, the way acemq-java-rabbitmq-admin does it.
+#
+# Both link checks live in the build script rather than here, so that a local
+# run and a CI run cannot disagree about what passes. ci.yml runs the same
+# script on every pull request; this workflow is only about deploying what it
+# produced.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+      - '.github/scripts/build-docs-site.sh'
+  workflow_dispatch:
+
+# One deployment at a time; a queued run supersedes a waiting one rather than
+# racing it. In-progress runs are allowed to finish so a half-published site is
+# never left behind.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pandoc
+
+      # Renders, and fails on a dead link or a dangling anchor at either end:
+      # over docs/*.md before rendering, because cross-page links are written as
+      # .md so the pages read correctly on GitHub and a site-only check cannot
+      # see that half; and over site/*.html afterwards, because a renamed
+      # heading silently moves its id and leaves every link to it pointing at
+      # the top of the page.
+      - name: Render the pages and check every link and anchor
+        run: bash .github/scripts/build-docs-site.sh
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # A job's own block replaces the workflow default rather than adding to it,
+    # so contents is repeated here. This is GitHub's own deploy-pages triple.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

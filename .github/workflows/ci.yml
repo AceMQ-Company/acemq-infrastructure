@@ -1,0 +1,108 @@
+# There is no product code here yet -- see docs/roadmap.md -- so there is
+# nothing to compile and no test suite to run. That is not a reason to have no
+# CI, because this repository ships two things that can break: shell and Python
+# scripts, and a configuration format that exists in a document and in examples
+# which can silently disagree with it.
+#
+# So CI checks exactly those:
+#
+#   * the scripts parse, and shellcheck is happy with them;
+#   * every example validates against the documented format;
+#   * every file in examples/rejected/ is REJECTED. That second assertion is the
+#     one that matters. A linter whose rules have quietly stopped firing passes
+#     everything, including the files that describe the mistakes it exists to
+#     catch, and looks exactly like a linter that works.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scripts:
+    name: scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax
+        run: |
+          for f in scripts/*.sh .github/scripts/*.sh; do
+            bash -n "$f" && echo "  ok $f"
+          done
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          # SC2317 fires on the command functions, which are reached through the
+          # case dispatch at the bottom and which shellcheck cannot see is a
+          # dispatch. SC1090/SC1091 are about sourced paths, which these do not do.
+          shellcheck --severity=warning --exclude=SC2317 scripts/*.sh .github/scripts/*.sh
+
+      - name: Executable bits
+        # A script committed without +x is one that everybody runs as
+        # `bash scripts/...` forever, and the README says `./scripts/...`.
+        run: |
+          fail=0
+          for f in scripts/blue-green-lab.sh scripts/lint-deployment.py; do
+            [ -x "$f" ] || { echo "::error::$f is not executable"; fail=1; }
+          done
+          exit $fail
+
+  examples:
+    name: configuration format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Every example validates
+        run: ./scripts/lint-deployment.py examples/*.yaml
+
+      - name: Every rejected example is rejected
+        # Asserted one file at a time so a single one silently starting to pass
+        # cannot hide behind another that still fails.
+        run: |
+          fail=0
+          for f in examples/rejected/*.yaml; do
+            if ./scripts/lint-deployment.py "$f" > /dev/null 2>&1; then
+              echo "::error::$f was accepted. It is deliberately wrong -- a rule"
+              echo "::error::in scripts/lint-deployment.py has stopped firing."
+              fail=1
+            else
+              echo "  ok $f is rejected, as intended"
+            fi
+          done
+          exit $fail
+
+  docs:
+    name: docs render and link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pandoc
+
+      # The build script carries both checks -- source-side over docs/*.md and
+      # rendered link-and-anchor over site/*.html -- and fails on either. Running
+      # it on every pull request means a broken link is caught before merge
+      # rather than by the deploy workflow after it.
+      - name: Render and check
+        run: bash .github/scripts/build-docs-site.sh

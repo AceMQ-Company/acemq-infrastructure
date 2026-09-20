@@ -1,0 +1,76 @@
+# DELIBERATELY WRONG. CI asserts that the linter rejects this file.
+#
+# Three separate mistakes, each of which costs messages, and each of which is
+# the kind of thing that looks fine in review until you know what to look for.
+# They are here so that the checks in scripts/lint-deployment.py are proved to
+# be live rather than merely written.
+#
+#   1. `topology` copies policies to green before the drain. A message-ttl or
+#      max-length policy is live the instant it lands, so the backlog arriving
+#      at step `drain-messages` is discarded on arrival. The single most
+#      valuable rule in the default step order exists because of this.
+#
+#   2. `drain-messages` has no preceding waitFor on publishRate or unacked.
+#      Unacked deliveries requeue on the SOURCE when a connection closes, so
+#      draining without settling first shovels messages that consumers were
+#      still holding -- and a shovel republishes, resetting x-delivery-count
+#      and erasing x-death.
+#
+#   3. `semantics` is missing. There is no default: at-least-once means a
+#      message may be processed on both clusters, at-most-once means one may be
+#      stranded, and the tool will not make that choice for you.
+#
+# docs/message-state.md is the long version of all three.
+---
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: wrong-on-purpose
+
+clusters:
+  blue:
+    management: ${BLUE_MGMT_URL}
+    amqp:       ${BLUE_AMQP_URL}
+    username:   ${BLUE_USERNAME}
+    password:   ${BLUE_PASSWORD}
+  green:
+    management: ${GREEN_MGMT_URL}
+    amqp:       ${GREEN_AMQP_URL}
+    username:   ${GREEN_USERNAME}
+    password:   ${GREEN_PASSWORD}
+
+provider: rabbitmq
+
+endpoint:
+  kind: external
+  description: "switched by hand"
+
+deployment:
+  operation: blueGreen
+  from: blue
+  to: green
+  # (3) no semantics
+
+  steps:
+    - id: topology
+      copyTopology:
+        from: blue
+        to: green
+        # (1) policies land before the backlog does
+        include: [exchanges, queues, bindings, policies]
+
+    # (2) nothing waits for producers to stop or consumers to settle
+    - id: drain-messages
+      drain:
+        from: blue
+        to: green
+        queues: ["orders.*"]
+      waitFor:
+        on: blue
+        depth: 0
+        timeout: 15m
+        onTimeout: abort
+
+    - id: switch-endpoint
+      endpoint:
+        target: green

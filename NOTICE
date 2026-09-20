@@ -1,0 +1,28 @@
+AceMQ Infrastructure
+Copyright 2026 AceMQ
+
+This product includes software developed at AceMQ (https://acemq.com).
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+---
+
+RabbitMQ is a trademark of Broadcom Inc. and/or its subsidiaries. AceMQ is an
+independent project and is not affiliated with, endorsed by, or sponsored by
+Broadcom. References to RabbitMQ describe compatibility only. Kubernetes is a
+trademark of The Linux Foundation.
+
+This repository currently contains documentation, shell and Python scripts, and
+example configuration. There is no product code and there are no compiled
+dependencies. When the tool described in docs/roadmap.md is built, it will
+depend on acemq-java-rabbitmq-admin, which is Apache-2.0 and part of this
+project, and on a YAML parser and a CLI framework whose licences will be
+recorded here at that point.
+
+scripts/blue-green-lab.sh runs the official RabbitMQ Docker images. Those are
+distributed under their own terms by their publishers and are not redistributed
+here.
+
+The design in this repository derives from an earlier implementation by the same
+author at felipeg48/infra-blue-green-deployment. docs/prior-art.md records what
+was carried forward and what was deliberately left behind.

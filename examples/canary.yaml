@@ -1,0 +1,170 @@
+# A canary: one workload moves, completely, and everything else stays on blue.
+#
+# There is no percentage here and there never will be. Splitting producers 95/5
+# across two clusters partitions the queue -- each cluster holds a fraction of
+# orders.notifications, consumers on one cannot see the other's messages, and
+# "roll back the 5%" strands whatever went the new way. docs/canary.md.
+#
+# The unit of a broker canary is a queue and everything attached to it.
+---
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: notifications-canary
+
+clusters:
+  blue:
+    management: ${BLUE_MGMT_URL}
+    amqp:       ${BLUE_AMQP_URL}
+    vhost:      /orders
+    username:   ${BLUE_USERNAME}
+    password:   ${BLUE_PASSWORD}
+  green:
+    management: ${GREEN_MGMT_URL}
+    amqp:       ${GREEN_AMQP_URL}
+    vhost:      /orders
+    username:   ${GREEN_USERNAME}
+    password:   ${GREEN_PASSWORD}
+
+provider: rabbitmq
+
+endpoint:
+  # The hard half of a canary. Everything else still resolves to blue, so the
+  # switch has to be per-service rather than estate-wide -- which is easy in a
+  # mesh and is real work in an estate where every application reads the same
+  # RABBITMQ_URL from the same config map.
+  kind: hook
+  run: ./switch-endpoint.sh
+  args: ["{{target}}", "notification-service"]
+  timeout: 2m
+
+deployment:
+  operation: canary
+  from: blue
+  to: green
+  semantics: atLeastOnce
+
+  scope:
+    vhost: /orders
+    queues:
+      - orders.notifications
+      - orders.notifications.dlq
+    # Not decoration. The plan asserts that every consumer of the queues above
+    # is one of these services, and refuses if something else is attached --
+    # moving the queue without that consumer is the partition this whole file
+    # is arranged to avoid.
+    services:
+      - notification-service
+
+  backup:
+    enabled: true
+    path: ./backups/{{name}}-{{timestamp}}.json
+    redactCredentials: true
+
+  announce:
+    exchange: ${ANNOUNCE_EXCHANGE}
+    routingKey: deployment.started
+    payload: |
+      {
+        "deployment": "notifications-canary",
+        "status": "started",
+        "target": "green",
+        "scope": "notification-service"
+      }
+
+  steps:
+    - id: probe
+      requires:
+        - TOPOLOGY_EXPORT
+        - TOPOLOGY_IMPORT_MERGE
+        - DRAIN_BY_SHOVEL
+        - CONNECTION_CLOSE
+        - CONSUMER_INSPECT
+
+    - id: topology
+      copyTopology:
+        from: blue
+        to: green
+        vhosts: ["/orders"]
+        include: [exchanges, queues, bindings, users, permissions]
+        exclude: [policies, operatorPolicies]
+
+    - id: announce-drain
+      announce: {}
+
+    - id: pause-producers
+      waitFor:
+        on: blue
+        publishRate: 0
+        timeout: 2m
+        onTimeout: prompt
+
+    - id: drain-consumers
+      closeConnections:
+        on: blue
+        select:
+          users: [notification-service]
+          role: consumer
+        after:
+          unacked: 0
+          timeout: 3m
+          onTimeout: abort
+      waitFor:
+        on: blue
+        unacked: 0
+        timeout: 3m
+        onTimeout: abort
+
+    - id: drain-messages
+      drain:
+        from: blue
+        to: green
+        queues: ["orders.notifications", "orders.notifications.dlq"]
+        ackMode: onConfirm
+        deleteAfter: queueLength
+      waitFor:
+        on: blue
+        depth: 0
+        timeout: 10m
+        onTimeout: abort
+
+    - id: policies
+      copyTopology:
+        from: blue
+        to: green
+        vhosts: ["/orders"]
+        include: [policies, operatorPolicies]
+
+    - id: switch-endpoint
+      endpoint:
+        target: green
+
+    - id: verify
+      waitFor:
+        on: green
+        consumers:
+          min: 1
+        timeout: 5m
+        onTimeout: abort
+
+rollback:
+  keep: blue
+  # Shorter than a full cutover's window: a canary is meant to be judged within
+  # a day, and the estate is genuinely split until it is.
+  for: 24h
+  steps:
+    - id: switch-endpoint
+      endpoint:
+        target: blue
+    - id: drain-back
+      drain:
+        from: green
+        to: blue
+        queues: ["orders.notifications", "orders.notifications.dlq"]
+        ackMode: onConfirm
+        deleteAfter: queueLength
+      waitFor:
+        on: green
+        depth: 0
+        timeout: 10m
+        onTimeout: abort

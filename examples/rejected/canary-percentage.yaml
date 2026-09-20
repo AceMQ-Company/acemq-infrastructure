@@ -1,0 +1,55 @@
+# DELIBERATELY WRONG. CI asserts that the linter rejects this file.
+#
+# This is the canary everybody writes first, because it is what a canary means
+# everywhere else: send 5% of the traffic to the new thing and watch.
+#
+# For a broker it is not a small cutover. It is a partitioned queue:
+#
+#   * orders.notifications now exists on both clusters, each holding a fraction
+#     of the messages;
+#   * a consumer attached to green cannot see blue's 95%, and there is no
+#     mechanism by which it could;
+#   * any per-key ordering guarantee is gone — two messages for the same
+#     customer can land on different clusters;
+#   * the dead-letter queues are split the same way, so a poison-message
+#     investigation now has two places to look;
+#   * and "roll back the 5%" undoes nothing. Those messages are on green. Delete
+#     green and they are gone; keep it and you have a cluster you cannot
+#     decommission holding orders nobody is consuming.
+#
+# The format has no percentage field, and the linter rejects every spelling of
+# one, because the field is the bug. docs/canary.md.
+---
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: wrong-on-purpose-canary
+
+clusters:
+  blue:
+    management: ${BLUE_MGMT_URL}
+    amqp:       ${BLUE_AMQP_URL}
+    username:   ${BLUE_USERNAME}
+    password:   ${BLUE_PASSWORD}
+  green:
+    management: ${GREEN_MGMT_URL}
+    amqp:       ${GREEN_AMQP_URL}
+    username:   ${GREEN_USERNAME}
+    password:   ${GREEN_PASSWORD}
+
+provider: rabbitmq
+
+endpoint:
+  kind: external
+  description: "weighted DNS"
+
+deployment:
+  operation: canary
+  from: blue
+  to: green
+  semantics: atLeastOnce
+  scope:
+    queues: ["orders.notifications"]
+    # No `services`, so nothing checks who else is consuming this queue —
+    # which is the check that stops a canary partitioning it.
+    percentage: 5

@@ -1,0 +1,172 @@
+# A complete blue/green cutover: everything in the /orders vhost moves from
+# blue to green, and blue is kept cold as the rollback.
+#
+# This is the worked example from docs/configuration.md. It is checked in CI by
+# scripts/lint-deployment.py, which is how the documented format and the
+# examples that illustrate it stay in agreement.
+#
+# Try it against two real brokers:
+#   ./scripts/blue-green-lab.sh up && ./scripts/blue-green-lab.sh seed
+---
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: orders-blue-green
+
+clusters:
+  blue:
+    management: ${BLUE_MGMT_URL}        # https://blue.internal:15671
+    amqp:       ${BLUE_AMQP_URL}        # amqps://blue.internal:5671
+    vhost:      /orders
+    username:   ${BLUE_USERNAME}
+    password:   ${BLUE_PASSWORD}
+    tls:
+      verify: true
+      caFile: ${CA_FILE}
+  green:
+    management: ${GREEN_MGMT_URL}
+    amqp:       ${GREEN_AMQP_URL}
+    vhost:      /orders
+    username:   ${GREEN_USERNAME}
+    password:   ${GREEN_PASSWORD}
+    tls:
+      verify: true
+      caFile: ${CA_FILE}
+
+provider: rabbitmq
+
+endpoint:
+  # The tool does not own DNS. It stops here and tells a human what to switch.
+  kind: external
+  description: >
+    orders-amqp.internal is a CNAME switched by the platform team.
+    Raise a change, then continue.
+
+deployment:
+  operation: blueGreen
+  from: blue
+  to: green
+
+  # No default. A duplicate is a problem you design against; a stranded message
+  # is one you find in a month. docs/message-state.md.
+  semantics: atLeastOnce
+
+  backup:
+    enabled: true
+    path: ./backups/{{name}}-{{timestamp}}.json
+    redactCredentials: true
+
+  announce:
+    exchange: ${ANNOUNCE_EXCHANGE}
+    routingKey: deployment.started
+    payload: |
+      {
+        "deployment": "orders-blue-green",
+        "status": "started",
+        "target": "green"
+      }
+
+  steps:
+    - id: probe
+      requires:
+        - TOPOLOGY_EXPORT
+        - TOPOLOGY_IMPORT_MERGE
+        - DRAIN_BY_SHOVEL
+        - CONNECTION_CLOSE
+        - CONSUMER_INSPECT
+
+    - id: topology
+      copyTopology:
+        from: blue
+        to: green
+        vhosts: ["/orders"]
+        include: [exchanges, queues, bindings, users, permissions, parameters]
+        # Policies are excluded here and applied at step `policies`, after the
+        # drain. A message-ttl policy is live the instant it lands and would
+        # discard the backlog on arrival.
+        exclude: [policies, operatorPolicies]
+
+    - id: announce-drain
+      announce: {}
+
+    # Producers first. A consumer closed while producers are still publishing
+    # leaves work behind that then has to be shovelled -- and a shovel
+    # republishes, which resets x-delivery-count and erases x-death.
+    - id: pause-producers
+      waitFor:
+        on: blue
+        publishRate: 0
+        timeout: 2m
+        onTimeout: prompt
+
+    - id: drain-consumers
+      closeConnections:
+        on: blue
+        select:
+          users: [orders-service]
+          role: consumer
+        after:
+          unacked: 0
+          timeout: 5m
+          onTimeout: abort
+      waitFor:
+        on: blue
+        unacked: 0
+        timeout: 5m
+        onTimeout: abort
+
+    # A shovel. Messages LEAVE blue. After this step the rollback for anything
+    # moved is a drain in the other direction, not a switch back.
+    - id: drain-messages
+      drain:
+        from: blue
+        to: green
+        queues: ["orders.*", "!orders.audit"]
+        ackMode: onConfirm
+        deleteAfter: queueLength
+      waitFor:
+        on: blue
+        depth: 0
+        timeout: 15m
+        onTimeout: abort
+
+    - id: policies
+      copyTopology:
+        from: blue
+        to: green
+        vhosts: ["/orders"]
+        include: [policies, operatorPolicies]
+
+    - id: switch-endpoint
+      endpoint:
+        target: green
+
+    # If clients came back to blue, the endpoint did not move. Catching that
+    # here is minutes; catching it at the next incident is not.
+    - id: verify
+      waitFor:
+        on: green
+        consumers:
+          min: 1
+        timeout: 5m
+        onTimeout: abort
+
+rollback:
+  keep: blue
+  for: 72h
+  steps:
+    - id: switch-endpoint
+      endpoint:
+        target: blue
+    - id: drain-back
+      drain:
+        from: green
+        to: blue
+        queues: ["orders.*"]
+        ackMode: onConfirm
+        deleteAfter: queueLength
+      waitFor:
+        on: green
+        depth: 0
+        timeout: 15m
+        onTimeout: abort

@@ -1,0 +1,72 @@
+# DELIBERATELY WRONG. CI asserts that the linter rejects this file.
+#
+# A mirror that names queues instead of exchanges. It is the most plausible
+# mistake in this repository, it is the one the lab script made on its first
+# run, and it is the one that looks like it is working.
+#
+# A federated QUEUE pulls from its upstream only when the upstream queue has no
+# local consumers. RabbitMQ's documentation is explicit about it: queue
+# federation "allows local consumers to receive messages from remote queues when
+# no local consumers are active" upstream. It is a work-queueing mechanism -- a
+# conditional MOVE -- not a copy.
+#
+# So a mirror built this way fails in the most misleading order available:
+#
+#   * while blue's consumers are healthy, nothing is copied and green sits
+#     empty. The mirror looks broken, and somebody spends an afternoon on it.
+#   * the moment blue's consumers stop -- which is exactly what a cutover does,
+#     on purpose -- messages start LEAVING blue for green. You have built an
+#     accidental drain that fires precisely when you were trying to preserve a
+#     rollback.
+#
+# A federated EXCHANGE replays what is published upstream into its own bound
+# queues, so blue routes as normal and green gets its own copy. That is the
+# mirror, and it is what examples/mirror.yaml asks for.
+#
+# docs/message-state.md has the table.
+---
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: wrong-on-purpose-mirror
+
+clusters:
+  blue:
+    management: ${BLUE_MGMT_URL}
+    amqp:       ${BLUE_AMQP_URL}
+    username:   ${BLUE_USERNAME}
+    password:   ${BLUE_PASSWORD}
+  green:
+    management: ${GREEN_MGMT_URL}
+    amqp:       ${GREEN_AMQP_URL}
+    username:   ${GREEN_USERNAME}
+    password:   ${GREEN_PASSWORD}
+
+provider: rabbitmq
+
+endpoint:
+  kind: external
+  description: "no endpoint change"
+
+deployment:
+  operation: mirror
+  from: blue
+  to: green
+
+  mirror:
+    # Queue federation. Wrong mechanism, silently.
+    queues: ["orders.new"]
+    upstream:
+      uri: ${BLUE_AMQP_URL}
+      prefetch: 1000
+
+  steps:
+    - id: probe
+      requires:
+        - MIRROR_BY_FEDERATION
+
+    - id: start-mirror
+      mirror:
+        from: blue
+        to: green
+        queues: ["orders.new"]
