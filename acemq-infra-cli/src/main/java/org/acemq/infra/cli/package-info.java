@@ -15,12 +15,15 @@
  */
 
 /**
- * The command line: {@code validate}, {@code plan}, and nothing else.
+ * The command line: {@code validate}, {@code plan}, {@code apply}, and nothing else.
  *
  * <p>A thin reader of the file, which is the jreleaser lesson docs/shape.md takes: the
  * configuration file is the interface and the CLI is a way of reading it. Almost nothing here is
- * logic — the rules are in the validator, the order is in the planner, and the one thing that
- * belongs to this layer is the decision {@link org.acemq.infra.cli.Variables} argues, about what
- * an unset {@code ${VAR}} means to a command that is never going to connect to anything.
+ * logic — the rules are in the validator, the order is in the planner, the steps are in the
+ * executor. Two decisions belong to this layer and both are about what a command means rather than
+ * about what it does: {@link org.acemq.infra.cli.Variables} argues what an unset {@code ${VAR}}
+ * means to a command that is never going to connect to anything, and
+ * {@link org.acemq.infra.cli.Terminal} decides whether there is anybody to ask before a cutover
+ * does something that cannot be taken back.
  */
 package org.acemq.infra.cli;

@@ -147,10 +147,11 @@ public record Plan(String name, String headline, ProbedCluster source, ProbedClu
         if (!ok()) {
             return "nothing was written, and nothing would be: this plan is refused.";
         }
-        // docs/roadmap.md ends this line with `run acemq-infra apply` to execute. There is no
-        // apply in this phase and there deliberately will not be one until phase 2, and a closing
-        // line that names a command which does not exist is a worse lie than a missing sentence.
-        return "nothing was written. executing a plan is phase 2; this build plans only.";
+        // docs/roadmap.md ends this line with `run acemq-infra apply` to execute, and now there is
+        // one. The file is not named because this record does not know what it was called and a
+        // path invented here would be a path somebody pastes.
+        return "nothing was written. run `acemq-infra apply -f` on this file to execute it, or"
+                + " `apply --dry-run` to see what each step would do right now.";
     }
 
     private static void bullet(List<String> out, String text) {

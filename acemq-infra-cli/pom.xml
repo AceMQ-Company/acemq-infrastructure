@@ -14,8 +14,9 @@
   <packaging>jar</packaging>
 
   <name>AceMQ Infrastructure CLI</name>
-  <description>acemq-infra validate and acemq-infra plan, and nothing else. Phase 1 stops there on
-    purpose: there is no apply, and no flag that looks like one.</description>
+  <description>acemq-infra validate, plan and apply, and nothing else. apply prints the plan and
+    stops to ask before the first write; --dry-run re-probes both clusters and rehearses every step
+    against them without writing anything.</description>
 
   <dependencies>
     <dependency>
@@ -26,6 +27,20 @@
     <dependency>
       <groupId>org.acemq</groupId>
       <artifactId>acemq-infra-rabbitmq</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <!-- Phase 2. apply is this module's third command and the executor is what
+         it is over, so the CLI is the one place in the reactor that depends on
+         both the module which reads and the module which writes. That is the
+         right shape rather than an erosion of the split: the arrows still run
+         one way, core still has no broker client, and acemq-infra-rabbitmq and
+         acemq-infra-execute still cannot see each other. What changes is only
+         that the thing a person runs can now reach both, which is what a thing
+         a person runs is for. -->
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-infra-execute</artifactId>
       <version>${project.version}</version>
     </dependency>
 

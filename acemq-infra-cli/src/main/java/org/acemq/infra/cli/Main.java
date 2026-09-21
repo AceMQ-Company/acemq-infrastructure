@@ -21,14 +21,19 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 
 import org.acemq.infra.config.Environment;
+import org.acemq.infra.execute.rabbitmq.RabbitBroker;
 import org.acemq.infra.provider.rabbitmq.RabbitProbe;
 
 /**
  * The entry point, and nothing but the entry point.
  *
  * <p>Everything a process has and a test does not — the real environment, the real streams, the
- * real broker, the right to end the process — is wired here and only here, so that {@link Cli} is
- * a thing a test constructs and calls.
+ * real broker, the human at the keyboard, the right to end the process — is wired here and only
+ * here, so that {@link Cli} is a thing a test constructs and calls.
+ *
+ * <p>The line that matters most is the console. Whether anybody is watching is decided by
+ * {@link Terminal} from the process this actually is, and this is the only place that decision is
+ * taken: no argument reaches it, so no argument can claim a person is present who is not.
  */
 public final class Main {
 
@@ -49,7 +54,8 @@ public final class Main {
         PrintStream err = new PrintStream(new FileOutputStream(FileDescriptor.err), true,
                 StandardCharsets.UTF_8);
 
-        int status = new Cli(out, err, Environment.system(), new RabbitProbe()).run(arguments);
+        int status = new Cli(out, err, Environment.system(), new RabbitProbe(), RabbitBroker::open,
+                Terminal.on(out)).run(arguments);
         out.flush();
         err.flush();
         System.exit(status);

@@ -572,11 +572,12 @@ class PlannerTest {
     class TheArtifact {
 
         @Test
-        @DisplayName("ends by saying that nothing was written")
+        @DisplayName("ends by saying that nothing was written, and what would write")
         void closingLine() {
             assertThat(plan("streams:\n  acknowledged: true\n" + CUTOVER).render())
-                    .endsWith("nothing was written. executing a plan is phase 2;"
-                            + " this build plans only.\n");
+                    .endsWith("nothing was written. run `acemq-infra apply -f` on this file to"
+                            + " execute it, or `apply --dry-run` to see what each step would do"
+                            + " right now.\n");
         }
 
         @Test
