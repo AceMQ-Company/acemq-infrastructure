@@ -12,6 +12,35 @@ Nothing has been released and nothing is tagged. The first version will be
 
 ### Added
 
+- **`acemq-infra plan`.** Reads two real RabbitMQ clusters and prints exactly
+  what a cutover would do, step by step, with the capabilities each step needs
+  and the guards it will wait on — and writes nothing to either broker. That
+  last clause is [milestone one](docs/roadmap.md), and it is structural rather
+  than careful: the planner is in a module with no broker client on its
+  classpath, its input is a snapshot record rather than a connection, and the
+  probe holds a read-only wrapper with the management client's writing half left
+  off. An integration test takes a cluster's definitions document, probes it
+  four times over, takes it again, and compares.
+- **`acemq-infra validate`**, the validator behind a command. An unset `${VAR}`
+  is reported and the file is still checked, because `validate` never connects
+  to anything; `--require-variables` makes it an error, which is what `plan`
+  does unconditionally. `scripts/lint-deployment.py` and the Java validator now
+  agree on that condition as well as on the six example files.
+- **`probe()` over `acemq-java-rabbitmq-admin`**, in `acemq-infra-rabbitmq`:
+  version, plugins, permissions and the capability set they add up to. A
+  capability is missing for one of three reasons with three different fixes — a
+  plugin to enable, a version to upgrade, a tag on a user — and every verdict
+  carries the observation behind it, because the useful half of
+  "`DRAIN_BY_SHOVEL` is missing" is the sentence after it.
+- **The default step list for each operation**, expanded and printed in full, in
+  the same `Step` and `Action` records a file parses into — so the list printed
+  is a list that can be pasted back into the file, and a test validates it to
+  prove it. The blue/green order is asserted position by position, because the
+  split of the topology copy around the drain is the bug the format exists to
+  prevent.
+- **The planner**, a pure function from a validated file and two probed clusters
+  to an ordered, diffable plan. Nothing in it reads a clock, which is both what
+  keeps it pure and what makes two plans comparable in a pull request.
 - **The design.** Eleven documents under `docs/`, covering what this is, the
   language and shape decisions, the provider seam, blue/green, canary, message
   state, the configuration format, the roadmap, and the prior art.
@@ -69,9 +98,12 @@ Nothing has been released and nothing is tagged. The first version will be
 
 ### Not done, deliberately
 
-- No product code. An executor that pretends to deploy would be worse than
-  nothing; see `docs/roadmap.md` for what gets built first and why it is the
-  half that cannot break production.
+- No `apply`, and no flag that resembles one. An executor that pretends to
+  deploy would be worse than nothing, and an unimplemented subcommand printing
+  "not yet" is a thing somebody puts in a pipeline. It is phase 2; see
+  `docs/roadmap.md`.
+- No verbs beyond `probe()`. The other eight all write, and each will be
+  declared in the same change that implements it rather than a phase early.
 - No provisioning. Terraform and the RabbitMQ Cluster Operator make clusters.
 - No second broker provider. Writing one speculatively would make the seam
   worse rather than better.

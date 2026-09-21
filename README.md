@@ -9,11 +9,13 @@
 Blue/green and canary cutovers for message brokers — the part that **moves
 clusters**.
 
-> **Status: nothing here deploys anything, on purpose.** The design, a
-> configuration format that is machine-checkable, a two-cluster development lab,
-> and an honest account of what a broker cutover cannot do. The first half of
-> milestone one is written — the configuration model and the validator, in
-> `acemq-infra-core` — and it is the half that cannot touch a broker. Nothing
+> **Status: `acemq-infra validate` and `acemq-infra plan` work. Nothing writes
+> to a broker, on purpose.** [Milestone one](docs/roadmap.md) is built: the
+> configuration model and the validator, `probe()` against two real clusters,
+> the default step list for each operation, the planner, and the CLI over them.
+> `plan` reads both clusters and prints exactly what a cutover would do, step by
+> step, with the capabilities each step needs and the guards it will wait on —
+> and writes nothing to either. There is no `apply`; that is phase 2. Nothing
 > has been released and nothing is tagged. See [the roadmap](docs/roadmap.md)
 > for the build order and [the library](docs/library.md) for what exists today.
 
@@ -40,17 +42,21 @@ Everything difficult is in "what is left" and in the fact that there is no
 moment at which both clusters agree. [Message state](docs/message-state.md) is
 the page to read if you read one.
 
-## What it will look like
+## What it looks like
+
+Against the two clusters `scripts/blue-green-lab.sh` puts up, abbreviated:
 
 ```console
 $ acemq-infra plan -f orders.yaml
 orders-blue-green — blueGreen, blue → green, semantics=atLeastOnce
 
-  probe             blue  RabbitMQ 3.13.7  shovel✓ federation✓
-                    green RabbitMQ 4.0.5   shovel✓ federation✓
+  probe             blue  RabbitMQ 3.13.7  shovel✓ federation✓ streams✓
+                    green RabbitMQ 4.0.5   shovel✓ federation✓ streams✓
+                    all 5 required capabilities present
   2 topology        14 exchanges, 31 queues, 58 bindings
-                    policies EXCLUDED — applied at step 6
-  6 drain-messages  shovel blue → green, 27,412 messages to move
+                    policies, operatorPolicies EXCLUDED — applied at step 7
+  6 drain-messages  shovel blue → green, 29 queues (orders.audit excluded)
+                    27,412 messages to move
                     wait: blue depth=0, 15m, on timeout ABORT
   8 switch-endpoint EXTERNAL — will stop and wait
 
@@ -58,11 +64,21 @@ warnings
   · 2 streams in scope. Offsets do not travel between clusters.
   · a shovel republishes: x-delivery-count resets on all 27,412 messages.
 
-nothing was written.
+nothing was written. executing a plan is phase 2; this build plans only.
 ```
 
-That command does not exist yet. It is [milestone one](docs/roadmap.md), and it
-is deliberately the half that cannot break production.
+And when a cluster cannot do it, the plan says so at second zero rather than at
+step six with half an estate moved:
+
+```console
+refused
+  · step 6 drain-messages needs DRAIN_BY_SHOVEL on blue, which does not have
+    it: rabbitmq_shovel and rabbitmq_shovel_management are not enabled on this
+    cluster (/api/shovels is not there).
+```
+
+There is no `apply`. Executing a plan is [phase 2](docs/roadmap.md), and this
+half is deliberately the one that cannot break production.
 
 ## The decisions
 
@@ -128,13 +144,22 @@ format stays honest while it is still only a document. See
 
 ```console
 $ mvn verify
+$ java -jar acemq-infra-cli/target/acemq-infra-cli-*.jar validate -f examples/blue-green.yaml
 ```
 
-Java 17, no broker, under a second. `acemq-infra-core` holds the configuration
-model and the validator; `acemq-infra-rabbitmq` and `acemq-infra-cli` are the
-two modules that follow. [The library](docs/library.md) explains the layout, the
-types it exposes, and what has deliberately been left for the next half of
-milestone one.
+Java 17. Three modules: `acemq-infra-core` holds the configuration model, the
+validator and the planner and has no broker client on its classpath;
+`acemq-infra-rabbitmq` holds `probe()` over
+[`acemq-java-rabbitmq-admin`](https://acemq.org/acemq-java-rabbitmq-admin/);
+`acemq-infra-cli` is the command line over both. The dependency runs one way,
+which is how "the planner writes nothing" is a fact the compiler enforces rather
+than a rule somebody remembers. [The library](docs/library.md) explains the
+layout, the types, and what has deliberately been left.
+
+The provider's tests need Docker: they run against a real broker through
+Testcontainers, including one with the shovel and federation plugins left
+disabled, which is the estate the capability model exists for. `mvn test` runs
+everything else without one.
 
 The Java validator and `scripts/lint-deployment.py` are held in agreement by the
 same six files: everything in `examples/` is accepted by both, and everything in

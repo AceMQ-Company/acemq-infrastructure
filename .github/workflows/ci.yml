@@ -1,8 +1,9 @@
 # Four things can break here, and CI checks all four.
 #
 #   * the shell and Python scripts parse, and shellcheck is happy with them;
-#   * the Java library builds and its tests pass -- the configuration model and
-#     the validator, which are the first half of milestone one;
+#   * the three Java modules build and their tests pass -- the configuration
+#     model, the validator and the planner in core; probe() against a broker in
+#     the provider; validate and plan in the CLI over both;
 #   * every example validates against the documented format;
 #   * every file in examples/rejected/ is REJECTED. That last assertion is the
 #     one that matters. A linter whose rules have quietly stopped firing passes
@@ -80,8 +81,23 @@ jobs:
           java-version: ${{ matrix.java }}
           cache: maven
 
+      # The whole reactor: acemq-infra-core, acemq-infra-rabbitmq and
+      # acemq-infra-cli. `verify` rather than `test`, because the provider's
+      # tests against a real broker are the *IT half of the split the parent pom
+      # sets up, and those are the ones that found both bugs in the probe --
+      # a federation endpoint answering 400 rather than 404, and a
+      # monitoring-only account that made the whole probe throw. They need a
+      # Docker daemon, which ubuntu-latest has; Testcontainers finds it without
+      # configuration, and a runner where it could not would fail rather than
+      # skip, which is the point of the step after this one.
       - name: Build and test
         run: mvn -B --no-transfer-progress clean verify
+
+      # The CLI has to be runnable to be a CLI. This catches the two ways the
+      # jar can be built wrongly and the test suite cannot see: a missing
+      # Main-Class and a classpath that does not name the dependencies.
+      - name: The packaged CLI runs
+        run: java -jar acemq-infra-cli/target/acemq-infra-cli-*.jar --version
 
       - name: Check nothing skipped
         # A skip reads as success. The other repositories in this family each

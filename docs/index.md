@@ -7,12 +7,13 @@ They drain, they pause, they shut down gracefully, and they do it the same way
 in Java, Go, .NET, Python and Ruby. What none of them can do is **move the
 cluster**. That is what this is for.
 
-> **Status: nothing here deploys anything.** The design, a configuration format,
-> a development lab, and an honest list of the things this will never do. The
-> first half of [milestone one](roadmap.md) is now written in Java — the
-> configuration model and the validator, described in
-> [the library](library.md) — and it is the half that cannot touch a broker.
-> Nothing has been released and nothing is tagged.
+> **Status: `acemq-infra validate` and `acemq-infra plan` work, and neither
+> writes to a broker.** [Milestone one](roadmap.md) is built: the configuration
+> model and the validator, `probe()` against two real clusters, the default step
+> list for each operation, the planner, and the CLI over them — described in
+> [the library](library.md). `plan` prints exactly what a cutover would do, step
+> by step, and writes nothing to either cluster. There is no `apply`; that is
+> phase 2. Nothing has been released and nothing is tagged.
 
 ## The pages
 
