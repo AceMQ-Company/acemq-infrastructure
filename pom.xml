@@ -85,8 +85,13 @@
     <!-- RabbitMQ's management API for Java, from the acemq.org feed. The
          provider module is the only thing that depends on it and it is the only
          thing that may: the whole point of the module split is that the
-         validator and the planner cannot see a management client. -->
-    <acemq.admin.version>0.1.1</acemq.admin.version>
+         validator and the planner cannot see a management client.
+
+         0.1.0 because that is what the feed publishes. A newer one existing in
+         somebody's local repository is not a release, and a build that resolves
+         from ~/.m2 and fails in CI is the failure this note exists to prevent
+         from happening twice. -->
+    <acemq.admin.version>0.1.0</acemq.admin.version>
 
     <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
     <maven.failsafe.plugin.version>3.5.2</maven.failsafe.plugin.version>
