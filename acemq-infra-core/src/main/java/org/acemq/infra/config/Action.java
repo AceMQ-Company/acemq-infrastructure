@@ -131,7 +131,7 @@ public sealed interface Action {
          * @param role what those connections are doing
          * @param location where {@code select:} is written
          */
-        record Selector(List<String> users, Optional<String> role, Location location) {
+        public record Selector(List<String> users, Optional<String> role, Location location) {
         }
 
         /**
@@ -146,8 +146,8 @@ public sealed interface Action {
          * @param onTimeout what to do when it expires
          * @param location where {@code after:} is written
          */
-        record After(OptionalInt unacked, Optional<Duration> timeout, Optional<OnTimeout> onTimeout,
-                     Location location) {
+        public record After(OptionalInt unacked, Optional<Duration> timeout,
+                            Optional<OnTimeout> onTimeout, Location location) {
         }
     }
 
