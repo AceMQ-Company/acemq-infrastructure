@@ -20,6 +20,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # acemq-java-rabbitmq-admin can release without a commit landing here, so the
+  # workflow also runs on a timer. That scheduled run is the only thing that will
+  # ever notice a library release moving underneath an untouched repository.
+  schedule:
+    - cron: '53 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -167,3 +172,54 @@ jobs:
       # rather than by the deploy workflow after it.
       - name: Render and check
         run: bash .github/scripts/build-docs-site.sh
+
+  tracks-the-release:
+    name: the pin is the newest release
+    runs-on: ubuntu-latest
+    # A job of its own rather than a step inside `build`, deliberately. A stale
+    # pin and a broken build are different findings and both are worth having:
+    # the reactor still compiles and the tests still run whatever this job
+    # concludes, so a red X here reads as "the pinned library is old", never as
+    # "we have no idea whether any of this works".
+    #
+    # The examples repositories have had this job for a while. Repositories that
+    # *consume* a library had nothing, which is the worse gap of the two: an
+    # examples repository pinned old proves something about a version nobody
+    # installs any more, whereas a consumer builds the stale library into what it
+    # ships. The provider module probes real brokers through this client, so a pin
+    # left behind means the probe is tested against management-API behaviour the
+    # current release no longer has.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The pinned library is the newest released one
+        # Hard failure rather than a warning, for the reason the examples
+        # repositories give: a warning in a log is what lets a pin drift for
+        # releases at a time, and a green build is read as an answer.
+        #
+        # The tags are asked of the library repository rather than of the Maven
+        # feed: git ls-remote needs no token, which matters on a scheduled run,
+        # and the tag is what the release was cut from.
+        run: |
+          pinned=$(sed -n 's/.*<acemq\.admin\.version>\(.*\)<\/acemq\.admin\.version>.*/\1/p' pom.xml | head -1)
+          newest=$(git ls-remote --tags https://github.com/AceMQ-Company/acemq-java-rabbitmq-admin \
+                     | grep -v '\^{}' | sed 's#.*refs/tags/##' \
+                     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' \
+                     | sort -V | tail -1)
+
+          # An empty answer means the listing failed or the tag naming changed,
+          # and comparing against nothing would pass silently forever.
+          if [ -z "$newest" ]; then
+            echo "::error::no release tags found on acemq-java-rabbitmq-admin, so the pin could not be checked"
+            exit 1
+          fi
+          if [ -z "$pinned" ]; then
+            echo "::error::no <acemq.admin.version> found in pom.xml, so the pin could not be checked"
+            exit 1
+          fi
+
+          if [ "$pinned" != "$newest" ]; then
+            echo "::error::pom.xml pins acemq-java-rabbitmq-admin $pinned but the newest release is $newest. Edit <acemq.admin.version> in pom.xml and set it to $newest, then build the reactor against it."
+            exit 1
+          fi
+          echo "pinned acemq-java-rabbitmq-admin $pinned, which is the newest release"
