@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.acemq</groupId>
+    <artifactId>acemq-infra-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>acemq-infra-rabbitmq</artifactId>
+  <packaging>jar</packaging>
+
+  <name>AceMQ Infrastructure RabbitMQ</name>
+  <description>probe(), against a real cluster, over acemq-java-rabbitmq-admin: version, plugins,
+    permissions and the capability set they add up to. This module reads and only reads.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-infra-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <!-- The management client, rather than an HTTP client and a page of JSON. It is
+         worth more than the code it saves. Four things bite anyone writing this by
+         hand: a 406 from an endpoint whose plugin is absent, a definitions export
+         that is a credential, the vhost in the path needing URL encoding, and a
+         statistics database that answers with numbers from five seconds ago. All
+         four are already answered there, once, in a repository that tests them
+         against a broker. -->
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-java-rabbitmq-admin</artifactId>
+      <version>${acemq.admin.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+    </dependency>
+
+    <!-- A probe is a question asked of a live broker, so the tests that prove it
+         reads the answer correctly need one. Testcontainers, as in every other
+         repository here, and for the reason etc/check-nothing-skipped.py exists:
+         the alternative is a test that skips when Docker is absent, and a skip
+         reads as a pass. The arithmetic over what the broker said is a separate
+         class with its own unit tests, so the combinations that are a nuisance
+         to arrange in a container are covered without one. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>rabbitmq</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Test scope, and it must stay that way: this module does not speak AMQP and
+         gains no dependency on a client. It is here because the number in "close 8
+         consuming connections" is joined from two management endpoints, and a test
+         with nothing connected would assert that zero equals zero. -->
+    <dependency>
+      <groupId>com.rabbitmq</groupId>
+      <artifactId>amqp-client</artifactId>
+      <version>${amqp.client.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

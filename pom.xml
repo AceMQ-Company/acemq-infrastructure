@@ -43,10 +43,13 @@
        RabbitMQ provider share a jar, that is a convention rather than a fact.
        Modules make it a fact the compiler enforces.
 
-       acemq-infra-core is the only module today. acemq-infra-rabbitmq (probe()
-       and the nine verbs over acemq-java-rabbitmq-admin) and acemq-infra-cli
-       (picocli over both, native-imaged for distribution) are the two that
-       follow; see docs/library.md.
+       The dependency direction is the enforcement for milestone one's last
+       clause. acemq-infra-core holds the model, the validator and the planner
+       and has no broker client on its classpath; acemq-infra-rabbitmq holds
+       probe() and depends on core; acemq-infra-cli depends on both. Nothing in
+       the planner can name a method that writes to a broker, because no such
+       method is reachable from where it is compiled, and Maven refuses the
+       cycle that would make one reachable.
 
        The version stays 0.1.0-SNAPSHOT in every pom here. The release version
        comes from the tag and is stamped with versions:set, which is how the
@@ -54,6 +57,8 @@
        remembered and bumped. -->
   <modules>
     <module>acemq-infra-core</module>
+    <module>acemq-infra-rabbitmq</module>
+    <module>acemq-infra-cli</module>
   </modules>
 
   <properties>
@@ -77,11 +82,28 @@
          is constructed reflectively. -->
     <snakeyaml.version>2.7</snakeyaml.version>
 
+    <!-- RabbitMQ's management API for Java, from the acemq.org feed. The
+         provider module is the only thing that depends on it and it is the only
+         thing that may: the whole point of the module split is that the
+         validator and the planner cannot see a management client. -->
+    <acemq.admin.version>0.1.1</acemq.admin.version>
+
     <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
     <maven.failsafe.plugin.version>3.5.2</maven.failsafe.plugin.version>
 
     <junit.version>5.11.4</junit.version>
     <assertj.version>3.27.7</assertj.version>
+
+    <!-- 1.21.4 rather than anything older, which is a lesson this family has
+         already paid for: the versions before it send an API version Docker
+         Desktop now refuses, and the failure reads as "cannot connect to
+         Docker" on a machine where Docker is plainly running. -->
+    <testcontainers.version>1.21.4</testcontainers.version>
+
+    <!-- Level with acemq-java-rabbitmq-admin and acemq-java-amqp, which pin the
+         same client. Test scope only, and only in the provider module: nothing
+         shipped here speaks AMQP. -->
+    <amqp.client.version>5.36.0</amqp.client.version>
   </properties>
 
   <dependencyManagement>
@@ -90,6 +112,13 @@
         <groupId>org.yaml</groupId>
         <artifactId>snakeyaml</artifactId>
         <version>${snakeyaml.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
       </dependency>
       <dependency>
         <groupId>org.junit.jupiter</groupId>
@@ -151,4 +180,18 @@
       </plugin>
     </plugins>
   </build>
+
+  <!-- Where acemq-java-rabbitmq-admin is read from. GitHub-hosted, like every
+       other artifact in this family, which is the standing policy rather than a
+       gap. The URL answers 301 to https://acemq.org/maven/ and Maven follows
+       it; anything that checks the feed by hand needs curl -L. -->
+  <repositories>
+    <repository>
+      <id>acemq</id>
+      <name>AceMQ releases</name>
+      <url>https://acemq-company.github.io/maven/</url>
+      <releases><enabled>true</enabled></releases>
+      <snapshots><enabled>false</enabled></snapshots>
+    </repository>
+  </repositories>
 </project>
