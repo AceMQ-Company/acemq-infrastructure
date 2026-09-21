@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.acemq</groupId>
+    <artifactId>acemq-infra-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>acemq-infra-core</artifactId>
+  <packaging>jar</packaging>
+
+  <name>AceMQ Infrastructure Core</name>
+  <description>The deployment file: its model, its parser, and the validator that refuses the
+    arrangements that cost messages. No broker client, on purpose — the validator is a pure
+    function over a parsed file and stays that way.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>**/*IT.java</exclude>
+          </excludes>
+          <systemPropertyVariables>
+            <!-- The examples are the fixtures. They live at the repository root
+                 because they illustrate docs/configuration.md and are linted in
+                 CI by scripts/lint-deployment.py, and the Java validator has to
+                 agree with that linter file for file — a second copy inside the
+                 module would drift from the documented ones within a week and
+                 the drift would be invisible. Passed as a property so the tests
+                 do not guess at the working directory; ExamplesTest falls back
+                 to ../examples when it is unset, which is what an IDE run
+                 gets. -->
+            <acemq.infra.examples>${project.basedir}/../examples</acemq.infra.examples>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

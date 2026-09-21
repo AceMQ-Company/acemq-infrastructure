@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.acemq</groupId>
+  <artifactId>acemq-infra-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>AceMQ Infrastructure</name>
+  <description>Blue/green and canary cutovers for message brokers: the configuration format, the
+    validator, and — later — the planner and the CLI over them. Nothing here writes to a broker.</description>
+  <url>https://acemq.org/acemq-infrastructure/</url>
+
+  <organization>
+    <name>AceMQ</name>
+    <url>https://acemq.com</url>
+  </organization>
+
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <name>Felipe Gutierrez</name>
+      <organization>AceMQ</organization>
+      <organizationUrl>https://acemq.com</organizationUrl>
+    </developer>
+  </developers>
+
+  <!-- A reactor rather than one jar, because docs/shape.md already committed to
+       shipping a library and a CLI in one release, and because the provider is
+       the one part that must not be reachable from the rest. The validator is a
+       pure function over a parsed file and has to stay testable with no broker
+       and no management client anywhere near it; the moment core and the
+       RabbitMQ provider share a jar, that is a convention rather than a fact.
+       Modules make it a fact the compiler enforces.
+
+       acemq-infra-core is the only module today. acemq-infra-rabbitmq (probe()
+       and the nine verbs over acemq-java-rabbitmq-admin) and acemq-infra-cli
+       (picocli over both, native-imaged for distribution) are the two that
+       follow; see docs/library.md.
+
+       The version stays 0.1.0-SNAPSHOT in every pom here. The release version
+       comes from the tag and is stamped with versions:set, which is how the
+       other repositories in this family avoid a committed file that has to be
+       remembered and bumped. -->
+  <modules>
+    <module>acemq-infra-core</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!-- Java 17, not the client libraries' 11. docs/shape.md settles this: the
+         libraries target 11 because an application on Spring Boot 2.7 has to be
+         able to depend on them, and that constraint belongs to a library other
+         people put on their classpath. This is an application. It takes records,
+         sealed interfaces and pattern matching and there is no caller to hold
+         back. -->
+    <maven.compiler.release>17</maven.compiler.release>
+
+    <!-- The only runtime dependency in the whole of core, and it is deliberate.
+         A native image is the distribution target (docs/shape.md), reflection is
+         what a native image takes away, and every dependency that binds YAML
+         into objects by reflection is a registration file somebody has to
+         maintain and a failure that only shows up in the field. SnakeYAML is
+         used here through compose() — the node tree, with marks — and nothing
+         is constructed reflectively. -->
+    <snakeyaml.version>2.7</snakeyaml.version>
+
+    <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
+    <maven.failsafe.plugin.version>3.5.2</maven.failsafe.plugin.version>
+
+    <junit.version>5.11.4</junit.version>
+    <assertj.version>3.27.7</assertj.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.yaml</groupId>
+        <artifactId>snakeyaml</artifactId>
+        <version>${snakeyaml.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>${junit.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>${assertj.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <!-- The same split as acemq-java-rabbitmq-admin and acemq-java-amqp:
+             unit tests on every build, anything named *IT in verify. There is
+             no *IT here yet — nothing in this module can reach a broker — but
+             the split is set up now so that the provider module inherits it
+             rather than inventing its own. -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven.surefire.plugin.version}</version>
+          <configuration>
+            <excludes>
+              <exclude>**/*IT.java</exclude>
+            </excludes>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-failsafe-plugin</artifactId>
+          <version>${maven.failsafe.plugin.version}</version>
+          <executions>
+            <execution>
+              <goals>
+                <goal>integration-test</goal>
+                <goal>verify</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

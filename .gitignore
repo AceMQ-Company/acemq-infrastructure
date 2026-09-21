@@ -7,6 +7,9 @@
 # local run. They are definitions documents, which carry password hashes.
 /backups/
 
+# Maven
+target/
+
 # Python
 __pycache__/
 *.pyc
