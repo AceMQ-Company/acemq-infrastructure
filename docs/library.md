@@ -2,17 +2,19 @@
 
 [Milestone one](roadmap.md) is written: the configuration model, the parser, the
 validator, `probe()` against a real cluster, the default step list for each
-operation, the planner, and the CLI over all of it. So is the first half of
-phase 2 — the executor, the other eight verbs of the provider seam, the guards
-and the rollback — as a library with no command over it yet. This page says what
-exists, what the types are called, and what has deliberately been left alone.
+operation, the planner, and the CLI over all of it. So is [phase 2](roadmap.md)
+— the executor, the other eight verbs of the provider seam, the guards, the
+rollback, and now `acemq-infra apply` with `--dry-run` over them. This page says
+what exists, what the types are called, and what has deliberately been left
+alone.
 
-There is now a module that writes, and the point of the arrangement is that it
-took nothing away. `plan` is exactly as incapable of writing as it was, and the
-probe's client still has no writing method on it — the section on
-[how that is enforced](#how-writes-nothing-is-structural) is the one to read if
-you read one part of this page. [The executor](#the-executor-and-what-it-hands-to-whoever-writes-apply)
-is the one to read if you are writing `apply`.
+There is now a module that writes and a command that reaches it, and the point
+of the arrangement is that it took nothing away. `plan` is exactly as incapable
+of writing as it was, and the probe's client still has no writing method on it —
+the section on [how that is enforced](#how-writes-nothing-is-structural) is the
+one to read if you read one part of this page.
+[The executor](#the-executor-and-the-command-over-it) is the one to read if you
+are about to run `apply` against something you care about.
 
 ## Modules
 
@@ -21,7 +23,7 @@ acemq-infra-parent          the reactor
 ├── acemq-infra-core        the deployment file, what is wrong with it, and the plan
 ├── acemq-infra-rabbitmq    probe(), over acemq-java-rabbitmq-admin — reads, only
 ├── acemq-infra-execute     the executor, and the eight verbs that write
-└── acemq-infra-cli         acemq-infra validate | plan
+└── acemq-infra-cli         acemq-infra validate | plan | apply
 ```
 
 A reactor rather than one jar, for one reason that is worth stating plainly.
@@ -34,7 +36,10 @@ somebody has to remember rather than a fact the compiler knows.
 
 The dependency runs one way and only one way — `cli` on the rest, `rabbitmq` and
 `execute` each on `core`, and `core` on nothing but SnakeYAML. Maven refuses the
-cycle that would be needed to reverse it.
+cycle that would be needed to reverse it. `cli` is the only module that depends
+on both the one that reads and the one that writes, which is what a thing a
+person runs is for, and it is still one-way: neither of the two can see the CLI
+or each other.
 
 `execute` sits *beside* `rabbitmq` rather than inside it, and that placement is
 the whole of how phase 2 adds a module that writes without weakening anything
@@ -60,7 +65,7 @@ remembered and bumped.
 | `org.acemq.infra.provider.rabbitmq` | `probe()`, and a management client with no writing method on it | — it reads, and it is the only thing in phase 1 with a socket |
 | `org.acemq.infra.execute` | The other eight verbs, the executor, the guards, the rollback | The planner's internals. It reads `Plan` and the configuration model and nothing under them |
 | `org.acemq.infra.execute.rabbitmq` | Those eight verbs against a real broker, and the client that can write | — it is the bottom of the writing stack |
-| `org.acemq.infra.cli` | Two commands and the streams they write to | Nothing beyond what the two commands need |
+| `org.acemq.infra.cli` | Three commands, the streams they write to, and the decision about whether anybody is watching | Nothing beyond what the three commands need |
 
 The arrow from `validate` to `provider` is the one that was a decision rather
 than an accident, and it is explained below. The one that is not there at all —
@@ -193,10 +198,10 @@ plugin enabled and no shovels, and a cluster without the plugin, produce the
 same empty list. So the probe asks `/api/shovels` and `/api/federation-links`
 itself and reads the code. It is a GET whose body is discarded.
 
-## The executor, and what it hands to whoever writes `apply`
+## The executor, and the command over it
 
-Phase 2's first half is a library with no command over it. This section is the
-seam: what exists, what to call, and what has deliberately been left.
+This section is the seam between the two halves of phase 2: the library, the
+command, and what each is responsible for.
 
 ```java
 Broker blue  = RabbitBroker.open(blueAccess);     // the same ClusterAccess probe() takes
@@ -237,28 +242,96 @@ System.out.print(execution.render());
 - **`Guards.check(waitFor, observation)`** is the guard arithmetic as a pure
   function — three verdicts, not two. `Guards.tooShortForTheStatistics` is the
   preflight rule about lagging numbers.
-- **`Console`** and **`Timing`** are the two interfaces the CLI has to supply. A
-  terminal console answers `PROCEED`/`STOP`; `Console.unattended` answers
-  `UNATTENDED`, which is a third answer and not a "no".
+- **`Console`** and **`Timing`** are the two interfaces the CLI supplies.
+  `Terminal` answers `PROCEED`/`STOP` from a keyboard; `Console.unattended`
+  answers `UNATTENDED`, which is a third answer and not a "no".
 
-### What the second half has to do
+### The command, and what `apply` does when you give it no flags
 
-- **`acemq-infra apply -f FILE`**, over `Run…cutover()`. Exit codes match the
-  existing ones: `0` completed, `1` refused, aborted or stopped, `2` a bad
-  command line.
-- **`--dry-run`**, over `Run…rehearsal()`. It re-probes both clusters and then
-  rehearses, which is what makes it different from `plan`: it reports what each
-  step *would* do at this moment rather than at the moment the plan was written.
-- **A `Console` on the terminal.** Two steps stop and ask — a guard whose
-  `onTimeout` is `prompt`, and an `endpoint: external` switch — and a run with
-  no terminal must get `UNATTENDED` rather than a guessed answer. The executor
-  refuses an unattended cutover with an external endpoint *before the first
-  write*, so the CLI does not have to.
-- **The cutover-then-rollback integration test** against
-  `scripts/blue-green-lab.sh`: run a cutover, run `Rollbacks.derive` over what it
-  did, execute that as a second `Run`, assert the estate is where it started and
-  count what was duplicated. Testcontainers, and `acemq-infra-execute`'s pom
-  already carries the dependencies and the failsafe split for `*IT`.
+`acemq-infra apply -f FILE` probes both clusters, prints the plan it is about to
+carry out, **stops, and asks**. Nothing has been written when the question is
+asked, and the only thing that gets past it is somebody typing the word `yes` at
+a terminal — not `y`, and not the return key, because the default a tired hand
+produces has to be the one that leaves the estate alone.
+
+Exit codes are the existing ones: `0` completed, `1` findings, a refused plan, or
+a run that was refused, stopped or aborted, `2` a bad command line.
+
+**`--yes` consents to the run starting and to nothing after it.** That sentence
+is the whole of how the flag is safe. Two steps in a cutover stop and ask — a
+guard whose `onTimeout` is `prompt`, and an `endpoint: external` switch — and
+those are answered by the terminal, or by `Console.unattended` when there is no
+terminal, and *no argument on the command line constructs either one*. Whether
+anybody is watching is a fact about the process, decided in one place from what
+`System.console()` answers, so a flag cannot claim a person is present who is
+not. A pipeline that passes `--yes` at a file with an external endpoint switch
+therefore gets a run the executor refuses in preflight, before the first write —
+which is the command and the executor agreeing rather than each having an
+opinion, and it is also why "apply needs a terminal" is *not* the rule: a run
+whose steps ask nobody anything belongs in a pipeline and completes there.
+
+The terminal check is not a null check on `System.console()`, and the comment on
+`Terminal` says why: up to JDK 21 that method answers null when the streams are
+redirected, and from 22 it answers a console either way and adds `isTerminal()`
+to tell them apart. This repository builds on 17, 21 and 25, so a null check
+alone would report a scheduled job on 25 as a person at a keyboard — which is
+the single worst way for this particular decision to be wrong.
+
+**`--dry-run` is not the plan printed twice.** `plan` is a function of two probe
+snapshots. `--dry-run` re-probes both clusters and then *rehearses*: every step
+reads the live estate — the topology, the connections, the queue depths — and
+reports what it would do at this moment, so a guard says what its condition is
+right now rather than what it will wait for. It runs over `Run…rehearsal()`,
+which wraps both brokers in a decorator whose writing verbs throw, so the mode is
+not a flag each step has to remember to honour. `--yes` with `--dry-run` is
+refused rather than ignored: a rehearsal writes nothing, so the two words
+together describe a situation that does not exist and the reader has plainly got
+one of them wrong.
+
+The one thing `apply` requires that `plan` does not is a cluster's `amqp:` URI.
+The validator warns about a missing one rather than refusing, and that is right
+for a plan, which never dials AMQP at all — but a drain is declared *inside* one
+broker and reaches across to the other from there, so it is an address the file
+has to give and the process has no way to derive.
+
+### The cutover-then-rollback test, and the number it measures
+
+`BlueGreenCutoverIT` puts up the two clusters `scripts/blue-green-lab.sh` builds
+— separate single-node clusters sharing a Docker network and nothing else — runs
+a cutover, runs the rollback derived from what that cutover actually did, and
+then asserts the estate is back where it started: the topology copied, the
+policies landed after the drain and not before, the queue the patterns excluded
+never moved, and every message accounted for by identity.
+
+The part [the roadmap](roadmap.md) asks for and that is easy to skip is the last
+clause: **count what was duplicated.** The file says `semantics: atLeastOnce`,
+and the honest reading of those two words is that some messages are handled on
+both clusters. So the test arranges for it rather than hoping: when the endpoint
+switches, an application arrives on green and is handed a prefetch worth of
+messages which it never settles. Those are processed — the handler ran — and
+closing that connection requeues them on green, from where the drain-back
+carries them to blue and hands them to somebody a second time. The suite prints
+the figure and asserts it:
+
+```
+the cost of this rollback
+  120 messages seeded on blue, 120 came back, 120 of them distinct
+  25 were handed to the application on green and handed out again on blue
+  that is 20.8% of the backlog processed on both clusters
+```
+
+Nothing was lost, and a fifth of the backlog was done twice. That number is the
+honest price of a rollback and somebody is entitled to it before they trust one.
+It is asserted to be greater than nought on purpose: a test that reported zero
+duplicates because nothing was ever in flight would be reporting on its own
+arrangement rather than on the rollback.
+
+One thing about that test is worth knowing before writing another like it. The
+`ProbedCluster` it hands each `Run.Side` is assembled from a live listing rather
+than taken from `probe()`, because `acemq-infra-execute` does not depend on
+`acemq-infra-rabbitmq` and must not — that is the whole of how the probe's client
+stays unable to write. `RabbitProbeIT` is where the probe itself is held to a
+real broker.
 
 ### Three decisions worth not re-litigating by accident
 
@@ -410,12 +483,14 @@ the real thing.
 
 ## What is deliberately not here
 
-- **`apply` and `--dry-run` on the CLI.** The executor exists and there is no
-  command over it yet. Phase 2's first half is a library; the commands are the
-  second half, and the section above says what to call. Until they land there is
-  still no subcommand and no flag that resembles one, for the reason phase 1
-  gave: an unimplemented command that prints "not yet" is worse than an absent
-  one, because it is a thing somebody puts in a pipeline.
+- **A `rollback` subcommand.** `Rollbacks.derive` is a library call and the
+  integration test drives it; there is no `acemq-infra rollback -f FILE` yet. The
+  missing piece is not the derivation, it is where the record of what a run did
+  would live between the two commands: a rollback is derived from the steps that
+  actually reached `done`, so a second process would have to be handed that list
+  rather than the file, and inventing a state file is a decision worth making
+  deliberately rather than as a side effect of adding a verb. Until then a report
+  says how many steps the rollback is, and the way to run one is the library.
 - **Tearing a mirror down.** The sealed `Action` type has no word for it, so
   `Rollbacks` does not invent one — it says in a note that the federation is
   still running and where. Adding a step to the configuration format so that a
@@ -598,6 +673,30 @@ queues as well as exchanges, and a federated queue pulls from its upstream only
 when the upstream has no local consumers. That is the accidental drain
 [message state](message-state.md) is about, fired by one JSON field, so the
 executor writes its federation policy itself rather than through that method.
+
+**The management API refuses the first request a JDK `HttpClient` sends it, if
+that request has a body.** The client defaults to HTTP/2 and reaches it over
+cleartext by asking the server to upgrade; against RabbitMQ's management listener
+that handshake fails whenever the request carrying it has a body, with
+`EOF reached while reading` and nothing on the broker's side to look at. A `GET`
+works, which is why the probe one module over has never met it and why it reads
+as a broken endpoint rather than a broken client — and once any `GET` has opened
+the connection, the `POST` that reuses it succeeds. So the failure is exactly the
+first body-carrying request on a fresh client, which in a blue/green run is the
+announcement at step 3. `curl` against the identical URL answered 200 throughout.
+The client is now pinned to HTTP/1.1, and nothing is given up by not negotiating:
+every call this class makes writes once, at a known moment. Found by the cutover
+integration test, on the first run that got as far as announcing.
+
+**A rollback run takes a backup, because `backup:` is a block rather than a
+step.** `Run.Builder.steps(…)` replaces the list, and the backup is not in the
+list — it is a field in the file that the executor turns into a numbered step of
+its own. So a rollback derived from a cutover and executed as a second `Run`
+snapshots the source again on its way past. Left as it is rather than special-
+cased: a definitions document taken immediately before a second cutover is not a
+useless artifact, and a `Run` that silently dropped part of the file when given
+an explicit step list would be a worse surprise than an extra file in the backup
+directory.
 
 **Some vocabularies are closed and some only look closed.** `operation`,
 `semantics`, `onTimeout` and `endpoint.kind` are written out in

@@ -7,13 +7,17 @@ They drain, they pause, they shut down gracefully, and they do it the same way
 in Java, Go, .NET, Python and Ruby. What none of them can do is **move the
 cluster**. That is what this is for.
 
-> **Status: `acemq-infra validate` and `acemq-infra plan` work, and neither
-> writes to a broker.** [Milestone one](roadmap.md) is built: the configuration
-> model and the validator, `probe()` against two real clusters, the default step
-> list for each operation, the planner, and the CLI over them — described in
-> [the library](library.md). `plan` prints exactly what a cutover would do, step
-> by step, and writes nothing to either cluster. There is no `apply`; that is
-> phase 2. Nothing has been released and nothing is tagged.
+> **Status: `validate`, `plan` and `apply` work against real RabbitMQ
+> clusters.** [Milestone one](roadmap.md) — the configuration model, the
+> validator, `probe()`, the default step list and the planner — was released as
+> `0.1.0`, and neither of its two commands writes to a broker.
+> [Phase 2](roadmap.md) is on `main`: the executor carries every step of the
+> default blue/green list out, `apply --dry-run` re-probes both clusters and
+> reports what each step would do at this moment, and the rollback is derived
+> from what a run actually did and tested by running one. `apply` prints the
+> plan and stops to ask before the first write, and the only thing that gets
+> past that question is the word `yes` typed at a terminal. All of it is
+> described in [the library](library.md).
 
 ## The pages
 

@@ -3,8 +3,8 @@
 #   * the shell and Python scripts parse, and shellcheck is happy with them;
 #   * the four Java modules build and their tests pass -- the configuration
 #     model, the validator and the planner in core; probe() against a broker in
-#     the provider; the executor and its guards in execute; validate and plan in
-#     the CLI over them;
+#     the provider; the executor, its guards and a cutover-then-rollback against
+#     two brokers in execute; validate, plan and apply in the CLI over them;
 #   * every example validates against the documented format;
 #   * every file in examples/rejected/ is REJECTED. That last assertion is the
 #     one that matters. A linter whose rules have quietly stopped firing passes
@@ -89,14 +89,22 @@ jobs:
 
       # The whole reactor: acemq-infra-core, acemq-infra-rabbitmq,
       # acemq-infra-execute and acemq-infra-cli. `verify` rather than `test`,
-      # because the provider's
-      # tests against a real broker are the *IT half of the split the parent pom
-      # sets up, and those are the ones that found both bugs in the probe --
-      # a federation endpoint answering 400 rather than 404, and a
-      # monitoring-only account that made the whole probe throw. They need a
-      # Docker daemon, which ubuntu-latest has; Testcontainers finds it without
-      # configuration, and a runner where it could not would fail rather than
-      # skip, which is the point of the step after this one.
+      # because the tests against real brokers are the *IT half of the split the
+      # parent pom sets up, and those are the ones that find the bugs no amount
+      # of reading a management API's documentation would -- a federation
+      # endpoint answering 400 rather than 404, a monitoring-only account that
+      # made the whole probe throw, and an HTTP/2 upgrade that fails on the first
+      # request with a body and takes the announcement step with it.
+      #
+      # acemq-infra-execute's is the expensive one and it is the point of phase
+      # two: two RabbitMQ containers on a shared network, a cutover, and then the
+      # rollback derived from it, with the guards waiting out their real settle
+      # windows. Two and a half minutes, and worth every second of it -- a
+      # rollback nobody has run is a rollback nobody should trust.
+      #
+      # They need a Docker daemon, which ubuntu-latest has; Testcontainers finds
+      # it without configuration, and a runner where it could not would fail
+      # rather than skip, which is the point of the step after this one.
       - name: Build and test
         run: mvn -B --no-transfer-progress clean verify
 

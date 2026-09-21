@@ -4,9 +4,10 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Nothing has been released and nothing is tagged. The first version will be
-`0.1.0`, and it will be [milestone one](docs/roadmap.md) — `validate` and
-`plan`, and nothing that writes to a broker.
+`0.1.0` is released: [milestone one](docs/roadmap.md), which is `validate` and
+`plan` and nothing that writes to a broker. What is unreleased below is
+[phase 2](docs/roadmap.md) — the executor, `apply`, and the rollback that a test
+actually runs.
 
 ## [Unreleased]
 
@@ -64,16 +65,76 @@ Nothing has been released and nothing is tagged. The first version will be
   arrow still points at `acemq-infra-core`, which still has no broker client on
   its classpath.
 
+- **`acemq-infra apply -f FILE`.** The third and last command, and the one that
+  can break production. It probes both clusters, prints the plan it is about to
+  carry out, **stops, and asks** — and the only thing that gets past that
+  question is the word `yes`, typed at a terminal. Not `y`, and not the return
+  key: the default a tired hand produces has to be the one that leaves the
+  estate alone. Nothing has been written when the question is asked, and a
+  cluster with no `amqp:` URI is refused here rather than warned about, because
+  a drain is declared inside one broker and dials the other.
+- **`--yes`, which consents to the run starting and to nothing after it.** Two
+  steps in a cutover stop and ask — a guard whose `onTimeout` is `prompt`, and
+  an `endpoint: external` switch — and those are answered by the terminal, or by
+  `Console.unattended` when there is no terminal, and **no argument on the
+  command line constructs either one**. Whether anybody is watching is a fact
+  about the process, decided in one place from what `System.console()` answers,
+  so no flag can claim a person is present who is not. A pipeline that passes
+  `--yes` at a file with an external endpoint switch gets a run the executor
+  refuses in preflight, before the first write. A run whose steps ask nobody
+  anything needs no terminal and completes in a pipeline, which is why the rule
+  is not "apply needs a terminal".
+- **`--dry-run`, which probes rather than replays.** `plan` is a function of two
+  probe snapshots; `--dry-run` re-probes both clusters and then rehearses every
+  step against them — reading the topology, listing the connections, measuring
+  the queues — so a guard reports what its condition is *at this moment* rather
+  than what it will wait for. It runs over `Run…rehearsal()`, which wraps both
+  brokers in a decorator whose writing verbs throw. `--yes` with `--dry-run` is
+  refused rather than ignored: the two words together describe a situation that
+  does not exist.
+- **A terminal that cannot be faked, on three JDKs.** The check is not a null
+  test on `System.console()`: up to 21 that method answers null when the streams
+  are redirected, and from 22 it answers a console either way and adds
+  `isTerminal()` to tell them apart. This repository builds on 17, 21 and 25, so
+  a null check alone would report a scheduled job on 25 as a person at a
+  keyboard.
+- **The cutover-then-rollback integration test**, which is the point of this
+  phase. Two RabbitMQ containers on a shared network — separate clusters rather
+  than two nodes of one, as `scripts/blue-green-lab.sh` argues — seeded, cut
+  over, and then rolled back with the list derived from what the cutover
+  actually did. It asserts the topology copied, the policies landed after the
+  drain, the queue the patterns excluded never moved, and every message back on
+  blue and accounted for by identity. And it **counts what was duplicated**:
+  an application arrives on green when the endpoint switches, is handed a
+  prefetch it never settles, and those messages are carried back and handled a
+  second time. The suite prints the figure and asserts it is not nought — 25 of
+  120, a fifth of the backlog processed on both clusters. That number is the
+  honest price of a rollback and somebody is entitled to it before they trust
+  one.
+
+### Fixed
+
+- **The management API refused the first request with a body.** The JDK's
+  `HttpClient` defaults to HTTP/2 and reaches it over cleartext by asking the
+  server to upgrade, and against RabbitMQ's management listener that handshake
+  fails whenever the request carrying it has a body — `EOF reached while
+  reading`, with nothing on the broker's side to look at, while `curl` against
+  the identical URL answers 200. A `GET` works, and once any `GET` has opened
+  the connection the `POST` that reuses it succeeds, so the failure is exactly
+  the first body-carrying request on a fresh client: in a blue/green run, the
+  announcement at step 3. The client is pinned to HTTP/1.1. Found by the cutover
+  integration test on the first run that got as far as announcing, which is the
+  kind of thing no amount of reading the management API's documentation would
+  have produced.
+
 ### Not done, deliberately
 
-- **No `apply` and no `--dry-run` on the CLI yet.** The executor is a library
-  with no command over it, which is the seam the second half of this phase
-  starts from. docs/library.md says exactly what to call.
-- **No integration test against `scripts/blue-green-lab.sh` yet.** The step
-  sequencing, the guard arithmetic, the settle window, what an abort does to a
-  shovel it declared and the rollback derivation are all covered without a
-  broker; the cutover-then-rollback test against two real clusters is the other
-  half of this phase.
+- **No `rollback` subcommand.** `Rollbacks.derive` is a library call and the
+  integration test drives it. The missing piece is not the derivation but where
+  the record of what a run did would live between two commands — a rollback is
+  derived from the steps that reached `done`, so a second process would have to
+  be handed that list rather than the file. Inventing a state file is a decision
+  worth making deliberately rather than as a side effect of adding a verb.
 
 ## [0.1.0] - 2026-09-21
 

@@ -9,15 +9,18 @@
 Blue/green and canary cutovers for message brokers — the part that **moves
 clusters**.
 
-> **Status: `acemq-infra validate` and `acemq-infra plan` work. Nothing writes
-> to a broker, on purpose.** [Milestone one](docs/roadmap.md) is built: the
-> configuration model and the validator, `probe()` against two real clusters,
-> the default step list for each operation, the planner, and the CLI over them.
-> `plan` reads both clusters and prints exactly what a cutover would do, step by
-> step, with the capabilities each step needs and the guards it will wait on —
-> and writes nothing to either. There is no `apply`; that is phase 2. Nothing
-> has been released and nothing is tagged. See [the roadmap](docs/roadmap.md)
-> for the build order and [the library](docs/library.md) for what exists today.
+> **Status: `validate`, `plan` and `apply` work against real RabbitMQ
+> clusters.** [Milestone one](docs/roadmap.md) — the configuration model, the
+> validator, `probe()`, the default step list and the planner — was released as
+> `0.1.0` and writes nothing to a broker. [Phase 2](docs/roadmap.md) is now on
+> `main`: the executor carries every step of the default blue/green list out
+> against two clusters, `apply --dry-run` re-probes both and reports what each
+> step would do at this moment, and the rollback is derived from what a run
+> actually did and tested by running one — a cutover, then the rollback, with
+> the estate asserted back where it started and the duplicate count measured
+> rather than described. `apply` prints the plan and stops to ask before the
+> first write. See [the roadmap](docs/roadmap.md) for the build order and
+> [the library](docs/library.md) for what exists today.
 
 The five AceMQ client libraries already do the client half of a cutover — drain,
 pause, graceful shutdown, the same way in Java, Go, .NET, Python and Ruby. None
@@ -64,7 +67,8 @@ warnings
   · 2 streams in scope. Offsets do not travel between clusters.
   · a shovel republishes: x-delivery-count resets on all 27,412 messages.
 
-nothing was written. executing a plan is phase 2; this build plans only.
+nothing was written. run `acemq-infra apply -f` on this file to execute it, or
+`apply --dry-run` to see what each step would do right now.
 ```
 
 And when a cluster cannot do it, the plan says so at second zero rather than at
@@ -77,8 +81,19 @@ refused
     cluster (/api/shovels is not there).
 ```
 
-There is no `apply`. Executing a plan is [phase 2](docs/roadmap.md), and this
-half is deliberately the one that cannot break production.
+`acemq-infra apply -f orders.yaml` carries it out. It prints that plan, stops,
+and asks — and the only thing that gets past the question is the word `yes`,
+typed at a terminal. `--yes` is how a pipeline says it has already decided, and
+it consents to the run *starting* and to nothing after it: an
+`endpoint: external` switch or an `onTimeout: prompt` in a run with nobody
+watching still stops it, and the external switch is refused in preflight before
+the first write rather than discovered at step eight with the drain done.
+
+`apply --dry-run` is not the plan printed again. It re-probes both clusters and
+rehearses every step against them — reading the topology, listing the
+connections, measuring the queues — so each guard reports what its condition is
+*at this moment* rather than what it will wait for. It cannot write: the brokers
+a rehearsal is handed throw on every verb that would.
 
 ## The decisions
 
@@ -147,19 +162,27 @@ $ mvn verify
 $ java -jar acemq-infra-cli/target/acemq-infra-cli-*.jar validate -f examples/blue-green.yaml
 ```
 
-Java 17. Three modules: `acemq-infra-core` holds the configuration model, the
+Java 17. Four modules: `acemq-infra-core` holds the configuration model, the
 validator and the planner and has no broker client on its classpath;
 `acemq-infra-rabbitmq` holds `probe()` over
-[`acemq-java-rabbitmq-admin`](https://acemq.org/acemq-java-rabbitmq-admin/);
-`acemq-infra-cli` is the command line over both. The dependency runs one way,
-which is how "the planner writes nothing" is a fact the compiler enforces rather
-than a rule somebody remembers. [The library](docs/library.md) explains the
-layout, the types, and what has deliberately been left.
+[`acemq-java-rabbitmq-admin`](https://acemq.org/acemq-java-rabbitmq-admin/) and
+contains no method that writes to a broker at all; `acemq-infra-execute` is the
+one that writes, and it sits beside the provider rather than inside it, so the
+two cannot see each other; `acemq-infra-cli` is the command line over all three.
+The dependency runs one way, which is how "the planner writes nothing" is a fact
+the compiler enforces rather than a rule somebody remembers.
+[The library](docs/library.md) explains the layout, the types, and what has
+deliberately been left.
 
-The provider's tests need Docker: they run against a real broker through
-Testcontainers, including one with the shovel and federation plugins left
-disabled, which is the estate the capability model exists for. `mvn test` runs
-everything else without one.
+The integration tests need Docker. The provider's run against a real broker
+through Testcontainers, including one with the shovel and federation plugins
+left disabled, which is the estate the capability model exists for. The
+executor's put up **two** brokers on a shared network — the same two clusters
+`scripts/blue-green-lab.sh` builds, and separate clusters rather than two nodes
+of one, for the same reason — run a cutover, run the rollback derived from it,
+and assert the estate is back where it started. `mvn test` runs everything else
+without a daemon; nothing anywhere here skips when Docker is absent, because a
+skip reads as a pass.
 
 The Java validator and `scripts/lint-deployment.py` are held in agreement by the
 same six files: everything in `examples/` is accepted by both, and everything in
