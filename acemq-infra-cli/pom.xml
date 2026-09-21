@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.acemq</groupId>
+    <artifactId>acemq-infra-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>acemq-infra-cli</artifactId>
+  <packaging>jar</packaging>
+
+  <name>AceMQ Infrastructure CLI</name>
+  <description>acemq-infra validate and acemq-infra plan, and nothing else. Phase 1 stops there on
+    purpose: there is no apply, and no flag that looks like one.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-infra-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-infra-rabbitmq</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+    </dependency>
+  </dependencies>
+
+  <!-- No argument-parsing library, and this is a change of mind from the note the
+       reactor was set up with, which said picocli. Two subcommands and four
+       options is ninety lines of parsing, and the alternative brings a dependency
+       whose normal mode is annotations read by reflection. docs/shape.md is
+       emphatic that reflection is what a native image takes away and that the
+       failure shows up in the field rather than in the build; picocli has an
+       annotation processor that answers this, and using it would mean taking on
+       the processor, its configuration and a second way for the build to be wrong
+       in exchange for ninety lines. If the command surface grows past what a
+       person can read in one screen, that trade changes. It has not. -->
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>org.acemq.infra.cli.Main</mainClass>
+              <addClasspath>true</addClasspath>
+              <classpathPrefix>lib/</classpathPrefix>
+              <!-- So that the version option has something to report. It reads
+                   the manifest rather than a constant, because a version in a
+                   committed file is one somebody has to remember to bump, and
+                   this family stamps it from the tag instead. -->
+              <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+
+      <!-- So that the jar the build produces is one somebody can actually run:
+           `java -jar target/acemq-infra-cli-*.jar plan -f deployment.yaml`. The
+           native images phase 4 ships are the distribution; this is how the thing
+           gets used in the meantime, and a CLI nobody can run is a library. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.10.0</version>
+        <executions>
+          <execution>
+            <id>runtime-classpath</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/lib</outputDirectory>
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
