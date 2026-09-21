@@ -17,7 +17,6 @@ package org.acemq.infra.provider;
 
 import java.time.Duration;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Everything a provider needs in order to reach one cluster, and nothing else.
@@ -87,10 +86,5 @@ public record ClusterAccess(String name, String management, String vhost, String
             return management;
         }
         return management.substring(0, scheme + 3) + "***@" + management.substring(at + 1);
-    }
-
-    /** The vhost as a human reads it, since {@code /} is easy to miss in a sentence. */
-    public Optional<String> describedVhost() {
-        return vhost.isEmpty() ? Optional.empty() : Optional.of(vhost);
     }
 }

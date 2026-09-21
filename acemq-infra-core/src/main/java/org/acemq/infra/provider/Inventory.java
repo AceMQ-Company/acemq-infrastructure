@@ -57,12 +57,14 @@ public record Inventory(int exchanges, int bindings, int users, int permissions,
         return new Inventory(0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
     }
 
-    /** How many messages are sitting in the queues in scope. */
-    public long depth() {
-        return queues.stream().mapToLong(Queue::messages).sum();
-    }
-
-    /** The streams, which are the queues nothing in this tool can move honestly. */
+    /**
+     * The streams, which are the queues nothing in this tool can move honestly.
+     *
+     * <p>There is deliberately no {@code depth()} beside this. A plan never wants the whole
+     * cluster's depth: it wants the depth of the queues a particular drain's patterns select, and
+     * a convenient total is a number that would end up in a plan meaning something subtly other
+     * than what it says.
+     */
     public List<Queue> streams() {
         return queues.stream().filter(Queue::isStream).toList();
     }
