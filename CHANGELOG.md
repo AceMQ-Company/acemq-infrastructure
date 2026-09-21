@@ -10,6 +10,13 @@ Nothing has been released and nothing is tagged. The first version will be
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-21
+
+**This release plans a cutover and writes nothing to any broker.** That is
+milestone one in a sentence, and the last clause is the point: it is the half
+that cannot break production, so it can be pointed at live clusters from the
+first day. `apply` is phase 2 and is deliberately not here.
+
 ### Added
 
 - **`acemq-infra plan`.** Reads two real RabbitMQ clusters and prints exactly
