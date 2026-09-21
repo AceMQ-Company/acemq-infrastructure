@@ -9,12 +9,13 @@
 Blue/green and canary cutovers for message brokers — the part that **moves
 clusters**.
 
-> **Status: a plan, not a product.** There is no code here that deploys
-> anything, on purpose. This repository holds the design, a configuration format
-> that is already machine-checkable, a two-cluster development lab, and an
-> honest account of what a broker cutover cannot do. Nothing has been released
-> and nothing is tagged. See [the roadmap](docs/roadmap.md) for the build order
-> and what milestone one delivers.
+> **Status: nothing here deploys anything, on purpose.** The design, a
+> configuration format that is machine-checkable, a two-cluster development lab,
+> and an honest account of what a broker cutover cannot do. The first half of
+> milestone one is written — the configuration model and the validator, in
+> `acemq-infra-core` — and it is the half that cannot touch a broker. Nothing
+> has been released and nothing is tagged. See [the roadmap](docs/roadmap.md)
+> for the build order and [the library](docs/library.md) for what exists today.
 
 The five AceMQ client libraries already do the client half of a cutover — drain,
 pause, graceful shutdown, the same way in Java, Go, .NET, Python and Ruby. None
@@ -122,6 +123,22 @@ a missing `semantics`. CI runs it over `examples/` and asserts that the
 deliberately-broken files in `examples/rejected/` are rejected, which is how the
 format stays honest while it is still only a document. See
 [`scripts/README.md`](scripts/README.md).
+
+## Building
+
+```console
+$ mvn verify
+```
+
+Java 17, no broker, under a second. `acemq-infra-core` holds the configuration
+model and the validator; `acemq-infra-rabbitmq` and `acemq-infra-cli` are the
+two modules that follow. [The library](docs/library.md) explains the layout, the
+types it exposes, and what has deliberately been left for the next half of
+milestone one.
+
+The Java validator and `scripts/lint-deployment.py` are held in agreement by the
+same six files: everything in `examples/` is accepted by both, and everything in
+`examples/rejected/` is refused by both, for the same reasons.
 
 ## What it will not do
 

@@ -235,6 +235,7 @@ NAV='<nav class="top">
   </div>
 
   <a href="configuration.html">Configuration</a>
+  <a href="library.html">The library</a>
   <a href="prior-art.html">Prior art</a>
   <a class="roadmap" href="roadmap.html">Roadmap</a>
   <a class="enterprise" href="https://acemq.org/">Client libraries</a>

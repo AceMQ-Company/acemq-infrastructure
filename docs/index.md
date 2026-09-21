@@ -7,12 +7,12 @@ They drain, they pause, they shut down gracefully, and they do it the same way
 in Java, Go, .NET, Python and Ruby. What none of them can do is **move the
 cluster**. That is what this is for.
 
-> **Status: a plan, not a product.** Nothing here deploys anything. This
-> repository holds the design for a tool that does not exist yet, a
-> configuration format it will read, a development lab to reason against, and an
-> honest list of the things it will never do. The first line of production code
-> has not been written, on purpose — see [the roadmap](roadmap.md) for what gets
-> built and in what order.
+> **Status: nothing here deploys anything.** The design, a configuration format,
+> a development lab, and an honest list of the things this will never do. The
+> first half of [milestone one](roadmap.md) is now written in Java — the
+> configuration model and the validator, described in
+> [the library](library.md) — and it is the half that cannot touch a broker.
+> Nothing has been released and nothing is tagged.
 
 ## The pages
 
@@ -25,6 +25,7 @@ cluster**. That is what this is for.
 | [Canary](canary.md) | Why a broker canary is not a traffic split, and what it is instead |
 | [Message state](message-state.md) | The hard parts, named: in-flight, unacked, durable data, stream offsets, shovels that consume |
 | [Configuration](configuration.md) | The proposed format, evolved from the one that already worked |
+| [The library](library.md) | What is built so far, the types it exposes, and what has deliberately been left |
 | [Roadmap](roadmap.md) | The phased build order and what milestone one actually delivers |
 | [Prior art](prior-art.md) | What came out of the C# implementation, and what was deliberately left there |
 
