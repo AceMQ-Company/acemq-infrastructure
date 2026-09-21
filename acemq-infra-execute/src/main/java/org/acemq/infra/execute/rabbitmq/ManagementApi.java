@@ -79,6 +79,19 @@ final class ManagementApi {
         this.timeout = access.timeout();
         this.client = HttpClient.newBuilder()
                 .connectTimeout(access.timeout())
+                // HTTP/1.1, pinned, and this is not a preference. The JDK's client defaults to
+                // HTTP/2 and reaches it over cleartext by asking the server to upgrade -- and
+                // against RabbitMQ's management listener that handshake fails whenever the request
+                // carrying it has a body, with "EOF reached while reading" and nothing on the
+                // broker's side to look at. Found by the cutover integration test: the announcement
+                // is the first call this class makes in a blue/green run, it is a POST, and it died
+                // every time while curl against the identical endpoint answered 200. A GET works,
+                // which is why the probe one module over has never seen this, and why it looks like
+                // a broken endpoint rather than a broken client -- once any GET has established the
+                // connection, the POST that reuses it succeeds, so the failure is the first
+                // body-carrying request on a fresh client and nothing else. Every call here writes
+                // once, at a known moment, so nothing is being given up by not negotiating.
+                .version(HttpClient.Version.HTTP_1_1)
                 // A redirect away from the management API means something is in front of the
                 // broker, and following it would send these credentials there. The same setting,
                 // for the same reason, as the probe's and the admin client's own.
