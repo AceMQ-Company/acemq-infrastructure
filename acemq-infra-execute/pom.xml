@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.acemq</groupId>
+    <artifactId>acemq-infra-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>acemq-infra-execute</artifactId>
+  <packaging>jar</packaging>
+
+  <name>AceMQ Infrastructure Execute</name>
+  <description>The executor: the steps a plan describes, carried out against real clusters. This is
+    the module that writes, and it is a module of its own so that the ones which do not write
+    cannot start.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-infra-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <!-- The same management client the probe reads through, and the important
+         thing is what is NOT here: acemq-infra-rabbitmq. This module does not
+         depend on the read-only provider and the read-only provider does not
+         depend on this one. They are siblings that happen to talk to the same
+         broker, which is what keeps "the probe holds a client with no writing
+         method on it" true by construction rather than by review. -->
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-java-rabbitmq-admin</artifactId>
+      <version>${acemq.admin.version}</version>
+    </dependency>
+
+    <!-- Three jobs, all of them the management API's JSON rather than a
+         convenience. A topology copy reads a definitions document, drops the
+         parts this step is not applying and writes the rest back; the publish
+         rate a guard waits on lives in a message_stats block the admin client
+         does not model; and the announcement envelope is posted as a JSON body.
+         Nothing here is databound reflectively: it is maps in and maps out, so
+         the native image phase 4 ships has nothing to register. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+    </dependency>
+
+    <!-- Here for the integration tests that run a cutover and then roll it back
+         against scripts/blue-green-lab.sh. The unit suite needs none of this:
+         the step sequencing, the guard arithmetic and the rollback derivation
+         are all tested against a Broker written in the test source, because a
+         suite that could only reach them through a container would reach two
+         cases and leave the rest to the field. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>rabbitmq</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.rabbitmq</groupId>
+      <artifactId>amqp-client</artifactId>
+      <version>${amqp.client.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

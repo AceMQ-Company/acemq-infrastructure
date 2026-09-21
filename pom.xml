@@ -51,6 +51,18 @@
        method is reachable from where it is compiled, and Maven refuses the
        cycle that would make one reachable.
 
+       Phase 2 adds acemq-infra-execute, which is the one module here that
+       writes, and it is placed so that it takes nothing away from the sentence
+       above. It sits beside acemq-infra-rabbitmq rather than inside it and
+       depends on core, so every arrow still points at core and core still has
+       no broker client: plan is exactly as incapable of writing after this
+       module exists as it was before. The other half of the same decision is
+       that the read-only wrapper the probe holds stays in acemq-infra-rabbitmq
+       and is not widened. The writing client is a different class in a
+       different module, so "the probe cannot write" goes on being a fact about
+       a classpath rather than a habit, and acemq-infra-rabbitmq having no
+       writing method anywhere in it is now the property to preserve.
+
        The version stays 0.1.0-SNAPSHOT in every pom here. The release version
        comes from the tag and is stamped with versions:set, which is how the
        other repositories in this family avoid a committed file that has to be
@@ -58,6 +70,7 @@
   <modules>
     <module>acemq-infra-core</module>
     <module>acemq-infra-rabbitmq</module>
+    <module>acemq-infra-execute</module>
     <module>acemq-infra-cli</module>
   </modules>
 
@@ -96,6 +109,16 @@
          at 0.1.0 after 0.1.1 was published. -->
     <acemq.admin.version>0.1.1</acemq.admin.version>
 
+    <!-- Declared rather than inherited. acemq-java-rabbitmq-admin brings Jackson
+         in transitively, and acemq-infra-execute genuinely needs it in its own
+         right: a topology copy filters a definitions document and writes it back,
+         and the management API's statistics have to be read out of JSON that the
+         admin client does not model. Depending on somebody else's transitive
+         dependency for that is how a library bump becomes a compile error in a
+         module that never asked for it. The number matches what the admin client
+         resolves today, so this pins rather than upgrades. -->
+    <jackson.version>2.18.9</jackson.version>
+
     <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
     <maven.failsafe.plugin.version>3.5.2</maven.failsafe.plugin.version>
 
@@ -120,6 +143,11 @@
         <groupId>org.yaml</groupId>
         <artifactId>snakeyaml</artifactId>
         <version>${snakeyaml.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson.version}</version>
       </dependency>
       <dependency>
         <groupId>org.testcontainers</groupId>
