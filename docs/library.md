@@ -2,20 +2,25 @@
 
 [Milestone one](roadmap.md) is written: the configuration model, the parser, the
 validator, `probe()` against a real cluster, the default step list for each
-operation, the planner, and the CLI over all of it. This page says what exists,
-what the types are called, and — the part that matters most to whoever writes
-phase 2 — what has deliberately been left alone.
+operation, the planner, and the CLI over all of it. So is the first half of
+phase 2 — the executor, the other eight verbs of the provider seam, the guards
+and the rollback — as a library with no command over it yet. This page says what
+exists, what the types are called, and what has deliberately been left alone.
 
-Nothing here writes to a broker. That is not a limitation of this stage; it is
-the deliverable, and the section on [how that is enforced](#how-writes-nothing-is-structural)
-is the one to read if you read one part of this page.
+There is now a module that writes, and the point of the arrangement is that it
+took nothing away. `plan` is exactly as incapable of writing as it was, and the
+probe's client still has no writing method on it — the section on
+[how that is enforced](#how-writes-nothing-is-structural) is the one to read if
+you read one part of this page. [The executor](#the-executor-and-what-it-hands-to-whoever-writes-apply)
+is the one to read if you are writing `apply`.
 
 ## Modules
 
 ```
 acemq-infra-parent          the reactor
 ├── acemq-infra-core        the deployment file, what is wrong with it, and the plan
-├── acemq-infra-rabbitmq    probe(), over acemq-java-rabbitmq-admin
+├── acemq-infra-rabbitmq    probe(), over acemq-java-rabbitmq-admin — reads, only
+├── acemq-infra-execute     the executor, and the eight verbs that write
 └── acemq-infra-cli         acemq-infra validate | plan
 ```
 
@@ -27,9 +32,16 @@ to stay testable with no broker and no management client anywhere near them, and
 the moment core and the RabbitMQ provider share a jar that is a convention
 somebody has to remember rather than a fact the compiler knows.
 
-The dependency runs one way and only one way — `cli` on both, `rabbitmq` on
-`core`, and `core` on nothing but SnakeYAML. Maven refuses the cycle that would
-be needed to reverse it.
+The dependency runs one way and only one way — `cli` on the rest, `rabbitmq` and
+`execute` each on `core`, and `core` on nothing but SnakeYAML. Maven refuses the
+cycle that would be needed to reverse it.
+
+`execute` sits *beside* `rabbitmq` rather than inside it, and that placement is
+the whole of how phase 2 adds a module that writes without weakening anything
+phase 1 established. Every arrow still points at `core`, so the planner is
+exactly as incapable of writing as it was; `rabbitmq` does not depend on
+`execute` and cannot see it, so the read-only client the probe holds stays
+read-only. The two never meet.
 
 The version in every pom is `0.1.0-SNAPSHOT` and stays that way. The release
 version comes from the tag and is stamped with `versions:set`, which is how the
@@ -45,7 +57,9 @@ remembered and bumped.
 | `org.acemq.infra.provider` | `Capability`, `Prober`, and the values a probe returns | The configuration model |
 | `org.acemq.infra.validate` | The rules | Anything with an address in it |
 | `org.acemq.infra.plan` | The default step lists, the planner, the plan | Anything that can write |
-| `org.acemq.infra.provider.rabbitmq` | `probe()`, and the management client | — it is the bottom of the stack and the only thing with a socket |
+| `org.acemq.infra.provider.rabbitmq` | `probe()`, and a management client with no writing method on it | — it reads, and it is the only thing in phase 1 with a socket |
+| `org.acemq.infra.execute` | The other eight verbs, the executor, the guards, the rollback | The planner's internals. It reads `Plan` and the configuration model and nothing under them |
+| `org.acemq.infra.execute.rabbitmq` | Those eight verbs against a real broker, and the client that can write | — it is the bottom of the writing stack |
 | `org.acemq.infra.cli` | Two commands and the streams they write to | Nothing beyond what the two commands need |
 
 The arrow from `validate` to `provider` is the one that was a decision rather
@@ -179,6 +193,101 @@ plugin enabled and no shovels, and a cluster without the plugin, produce the
 same empty list. So the probe asks `/api/shovels` and `/api/federation-links`
 itself and reads the code. It is a GET whose body is discarded.
 
+## The executor, and what it hands to whoever writes `apply`
+
+Phase 2's first half is a library with no command over it. This section is the
+seam: what exists, what to call, and what has deliberately been left.
+
+```java
+Broker blue  = RabbitBroker.open(blueAccess);     // the same ClusterAccess probe() takes
+Broker green = RabbitBroker.open(greenAccess);
+
+Run run = Run.of(file)
+        .from(new Run.Side("blue",  probedBlue,  blue,  blueAmqpUri))
+        .to(  new Run.Side("green", probedGreen, green, greenAmqpUri))
+        .console(console)
+        .cutover();                               // or .rehearsal()
+
+Execution execution = Executor.execute(run);
+System.out.print(execution.render());
+```
+
+- **`Run`** describes an execution completely before any of it happens, and
+  **there is no way to describe a writing one by leaving something out**. The
+  builder has two terminal methods with two different names — `rehearsal()` and
+  `cutover()` — rather than a `boolean dryRun` or an enum with a default, so the
+  word at the call site is the word for what will happen. `Run.Side` carries the
+  name the file gave a cluster, the `ProbedCluster` the capability assertions are
+  made against, the `Broker`, and the AMQP URI *the other broker will dial* — a
+  shovel runs inside a broker, so that is not the address on the operator's
+  laptop.
+- **`Executor.execute(run)`** returns an **`Execution`**: an outcome, a `Taken`
+  per step with its number and its lines, the notes, anything still declared on a
+  broker, and the derived rollback. `render()` is the report. The numbering
+  matches the plan's — the backup is a step in the output without being one in
+  the file, the `probe` step is the reverse — so a report can be read against the
+  pull request that approved the plan.
+- **`Broker`** is the eight verbs: `snapshotTopology`, `applyTopology`,
+  `listAttachments`, `detach`, `drain`, `mirror`, `measure`, `announce`, with
+  `finished` and `cancel` beside the two that declare something.
+  `RabbitBroker.open` is the RabbitMQ implementation.
+- **`Rollbacks.derive(file, completedSteps, from, to)`** works out how to get
+  back from what a run actually did. `Rollbacks.notes` is what a report has to
+  say about it that the step list cannot.
+- **`Guards.check(waitFor, observation)`** is the guard arithmetic as a pure
+  function — three verdicts, not two. `Guards.tooShortForTheStatistics` is the
+  preflight rule about lagging numbers.
+- **`Console`** and **`Timing`** are the two interfaces the CLI has to supply. A
+  terminal console answers `PROCEED`/`STOP`; `Console.unattended` answers
+  `UNATTENDED`, which is a third answer and not a "no".
+
+### What the second half has to do
+
+- **`acemq-infra apply -f FILE`**, over `Run…cutover()`. Exit codes match the
+  existing ones: `0` completed, `1` refused, aborted or stopped, `2` a bad
+  command line.
+- **`--dry-run`**, over `Run…rehearsal()`. It re-probes both clusters and then
+  rehearses, which is what makes it different from `plan`: it reports what each
+  step *would* do at this moment rather than at the moment the plan was written.
+- **A `Console` on the terminal.** Two steps stop and ask — a guard whose
+  `onTimeout` is `prompt`, and an `endpoint: external` switch — and a run with
+  no terminal must get `UNATTENDED` rather than a guessed answer. The executor
+  refuses an unattended cutover with an external endpoint *before the first
+  write*, so the CLI does not have to.
+- **The cutover-then-rollback integration test** against
+  `scripts/blue-green-lab.sh`: run a cutover, run `Rollbacks.derive` over what it
+  did, execute that as a second `Run`, assert the estate is where it started and
+  count what was duplicated. Testcontainers, and `acemq-infra-execute`'s pom
+  already carries the dependencies and the failsafe split for `*IT`.
+
+### Three decisions worth not re-litigating by accident
+
+**A guard that cannot see its condition fails; it does not wait.** `Guards` has
+three verdicts and the third is `UNOBSERVABLE`. A condition nobody read has not
+come true and has not failed to, so `onTimeout` has no honest answer for it —
+and `continue` on an unobservable condition walks past a guard that was never
+evaluated. The case that forced this is `publishRate`: it comes out of a
+`message_stats` block that a broker with `rates_mode = none` does not have at
+all, and an absent block is not a rate of nought.
+
+**A guard is satisfied by a run of readings, not by one.** The management API's
+depths and counts come from a statistics database that refreshes on
+`collect_statistics_interval` — five seconds by default — rather than on every
+publish. `scripts/blue-green-lab.sh` wrote this down after its own `seed`
+reported zeroes for queues it had demonstrably just filled, and every depth guard
+in this tool reads the same lagging number. So the condition has to hold across
+`Guards.SETTLE`, which is three intervals, and a guard whose timeout is shorter
+than that window is refused before the run starts. A drain's guard also waits for
+the shovel to have removed itself, which is a fact about the movement rather than
+a number from the database, and is worth more than either on its own.
+
+**An abort tears down what the run declared, and only that.** A shovel goes on
+moving messages after the process that declared it stops looking, so leaving one
+running means the source quietly empties while the report says the cutover
+stopped. A shovel somebody *else* declared is somebody else's, and is never
+touched. Anything that would not come down is named in the report under its own
+heading, which is the line an operator has to act on.
+
 ## How "writes nothing" is structural
 
 The last clause of [the roadmap](roadmap.md)'s sentence for milestone one is
@@ -208,6 +317,25 @@ places:
 An integration test asserts the outcome those four produce: take a real
 cluster's definitions document, probe it four times over with two different
 accounts, take it again, compare.
+
+**Phase 2 does not weaken any of the four, and that was a constraint on how the
+executor was added rather than a happy accident.** `acemq-infra-execute` sits
+beside `acemq-infra-rabbitmq` and depends on `acemq-infra-core`, so (1) still
+holds — core has no broker client on its classpath and Maven still refuses the
+cycle. (2) is unchanged: the executor is handed `ProbedCluster` snapshots too,
+for the same reason, so a run's refusals cannot move underneath it. (3) is the
+one that took a decision. The obvious way to give the executor what it needs is
+to put `declareShovel` and `importDefinitions` back onto `ReadOnlyAdmin`, perhaps
+behind a flag — and that would hand the probe an object that *can* write and
+merely does not, which is the state of affairs the class was written to end. So
+the writing client is `ChangingAdmin`: a different class, with a name that says
+what it does, in a module `acemq-infra-rabbitmq` does not depend on and cannot
+see. The property being preserved is now stronger than "the probe does not
+write": **`acemq-infra-rabbitmq` contains no method that writes to a broker at
+all.** Not none that are called — none that exist. (4) is the only one that
+moves, and only in the executor: a run reads a clock, because two backups of the
+same estate must not land on the same filename. The planner still does not, which
+is what keeps two plans diffable.
 
 ## Where the capability set lives, and why
 
@@ -282,17 +410,19 @@ the real thing.
 
 ## What is deliberately not here
 
-- **The other eight verbs.** `snapshotTopology`, `applyTopology`,
-  `listAttachments`, `detach`, `drain`, `mirror`, `measure` and `announce` are
-  not written. [Broker-agnostic, honestly](broker-agnostic.md) is an argument
-  that a seam extracted before its first implementation exists is the bad kind
-  of seam, and the argument does not weaken because one verb has now been
-  implemented. They arrive with the executor, each declared in the change that
-  implements it.
-- **`apply`.** Phase 1 stops at `validate` and `plan`. There is no subcommand
-  for it and no flag that resembles one: an unimplemented command that prints
-  "not yet" is worse than an absent one, because it is a thing somebody puts in
-  a pipeline.
+- **`apply` and `--dry-run` on the CLI.** The executor exists and there is no
+  command over it yet. Phase 2's first half is a library; the commands are the
+  second half, and the section above says what to call. Until they land there is
+  still no subcommand and no flag that resembles one, for the reason phase 1
+  gave: an unimplemented command that prints "not yet" is worse than an absent
+  one, because it is a thing somebody puts in a pipeline.
+- **Tearing a mirror down.** The sealed `Action` type has no word for it, so
+  `Rollbacks` does not invent one — it says in a note that the federation is
+  still running and where. Adding a step to the configuration format so that a
+  derivation came out tidy would be the format serving the code.
+- **The `for: 72h` window.** Parsed, reported, and not enforced.
+  [Blue/green](blue-green.md) is explicit that it is documentation with a name:
+  the tool will remind you it has passed and will not delete anything.
 - **A canary's scope safety check.** [Canary](canary.md) requires that every
   consumer of a scoped queue belongs to one of the named services, and says the
   plan refuses when it does not. The plan currently *warns* that the check is
@@ -390,8 +520,11 @@ policies differ from the source's is not a comparison worth making.
 
 ## What turned out to be underspecified
 
-Two things in the documented format, found by trying to implement it rather than
-read it, and three more found by running the result against real brokers.
+Three things in the documented format, found by trying to implement it rather
+than read it, and several more in RabbitMQ's own API found by trying to drive
+it. The first group are the format's; the ones from `apply` are at the end and
+are the sharper half, because a plan can describe a step it has never had to
+perform.
 
 **`streams:` is a documented top-level key with no documented body.** The linter
 accepts it and checks nothing inside; [the roadmap](roadmap.md)'s worked plan
@@ -427,6 +560,44 @@ with an exception instead of reporting what it found. A count that cannot be
 taken is now nought and a note saying so, because a plan reading "0 users" where
 the credentials could not look is indistinguishable from a cluster that has
 none.
+
+**A definitions document does not carry operator policies.** `/api/definitions`
+has a `policies` section and nothing of that kind for operator policies, which
+live behind `/api/operator-policies` and have to be copied one at a time. The
+configuration format has `operatorPolicies` as a `TopologyPart` because
+[message state](message-state.md) is right that they are the correct tool for
+fencing a target cluster during a migration — so the copy applies them
+individually, with each policy's own `apply-to` kept, because an operator policy
+moved from exchanges to queues is a different policy wearing the same name.
+
+**The vhost-scoped definitions export cannot be imported.**
+`/api/definitions/<vhost>` leaves the `vhost` field off every entry, since the
+endpoint it came from already said which one — and the only import endpoint is
+the cluster-wide `/api/definitions`, so the scoped document lands in the default
+virtual host. The executor takes the cluster-wide export and narrows it itself.
+
+**`after:` on a connection close is waited on *before* anything closes.** The
+field's name reads the other way and the documentation settles it:
+[blue/green](blue-green.md) numbers step 6 "wait until unacked is zero, then
+close what is left", and [message state](message-state.md) is emphatic that
+closing everything at once maximises the requeue storm, what the shovel then has
+to move, and the duplicate count. Read as a post-condition the guard is satisfied
+the instant it is asked, because closing a connection requeues what it held as
+*ready* rather than unacknowledged — and a condition that is true by construction
+is not a guard.
+
+**`ackMode: onConfirm` is not what the broker calls it.** The file keeps
+`ackMode` and `deleteAfter` as written, for the reason below; RabbitMQ wants
+`on-confirm` and `queue-length`. The translation lives in the RabbitMQ provider,
+which is the one place that knows what the broker's spelling is, and a value
+already written in kebab case passes through.
+
+**`RabbitAdmin.putPolicy` writes `apply-to: all`.** Correct in general and
+catastrophic for a mirror: a federation policy that applies to *all* applies to
+queues as well as exchanges, and a federated queue pulls from its upstream only
+when the upstream has no local consumers. That is the accidental drain
+[message state](message-state.md) is about, fired by one JSON field, so the
+executor writes its federation policy itself rather than through that method.
 
 **Some vocabularies are closed and some only look closed.** `operation`,
 `semantics`, `onTimeout` and `endpoint.kind` are written out in

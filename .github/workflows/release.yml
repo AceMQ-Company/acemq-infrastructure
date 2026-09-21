@@ -3,8 +3,9 @@
 #
 # Triggered by a tag:  git tag -a v0.1.0 -m 0.1.0 && git push origin v0.1.0
 #
-# What this publishes, and what it does not. Four Maven artifacts: the parent
-# pom, acemq-infra-core, acemq-infra-rabbitmq and acemq-infra-cli. The CLI jar
+# What this publishes, and what it does not. Five Maven artifacts: the parent
+# pom, acemq-infra-core, acemq-infra-rabbitmq, acemq-infra-execute and
+# acemq-infra-cli. The CLI jar
 # is runnable in the ordinary way once its dependencies are on the classpath,
 # which is what a Maven consumer gets. The GraalVM native images are phase 4 and
 # are deliberately not here — a release that quietly shipped half a distribution
@@ -156,8 +157,8 @@ jobs:
             deploy -DaltDeploymentRepository="acemq::default::file://$GITHUB_WORKSPACE/maven-repo"
 
       - name: Check every module actually landed
-        # This is four artifacts, not one, and the CLI is useless without the
-        # two libraries under it. Deploying three of four leaves a release that
+        # This is five artifacts, not one, and the CLI is useless without the
+        # three libraries under it. Deploying four of five leaves a release that
         # resolves until somebody reaches the missing one, so they are counted
         # in the tree before anything is pushed.
         working-directory: maven-repo
@@ -165,7 +166,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           missing=""
-          for artifact in acemq-infra-parent acemq-infra-core acemq-infra-rabbitmq acemq-infra-cli; do
+          for artifact in acemq-infra-parent acemq-infra-core acemq-infra-rabbitmq acemq-infra-execute acemq-infra-cli; do
             if [ ! -f "org/acemq/$artifact/$VERSION/$artifact-$VERSION.pom" ]; then
               missing="$missing $artifact"
             fi
@@ -174,7 +175,7 @@ jobs:
             echo "::error::these modules did not reach the feed:$missing"
             exit 1
           fi
-          echo "all four modules are present"
+          echo "all five modules are present"
 
       - name: Commit and push
         # `published` is the line between "nothing happened" and "something is

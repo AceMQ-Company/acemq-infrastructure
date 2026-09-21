@@ -10,6 +10,71 @@ Nothing has been released and nothing is tagged. The first version will be
 
 ## [Unreleased]
 
+### Added
+
+- **`acemq-infra-execute`, the executor.** A fourth module, and it is the one
+  that writes. Every action in the default blue/green list is carried out
+  against real clusters — `Requires`, `CopyTopology`, `Announce`,
+  `CloseConnections`, `Drain`, `Mirror` and `Switch`, with `backup` as the block
+  it is rather than an action. It runs in one of two modes and there is no
+  default: `Run.of(file)…cutover()` writes, `Run.of(file)…rehearsal()` does not,
+  and a rehearsal wraps both brokers in a decorator that throws on every writing
+  verb, so a step that forgot which mode it was in fails loudly instead of
+  quietly writing to production.
+- **The other eight verbs of [the provider seam](docs/broker-agnostic.md)**,
+  each declared in the change that implements it, as `probe()` was:
+  `snapshotTopology`, `applyTopology`, `listAttachments`, `detach`, `drain`,
+  `mirror`, `measure` and `announce`. The destructive ones are shaped so they
+  cannot be reached by accident — `detach` closes one named connection rather
+  than a selector's worth, a drain refuses to be built with an empty queue list,
+  and a mirror has no queue field at all.
+- **Guards that can say they cannot see.** A condition is satisfied, not yet, or
+  **unobservable**, and the third one fails immediately rather than waiting out
+  a timeout and then honouring `onTimeout`. A guard whose condition was never
+  read has not failed, and `continue` has no honest answer for it. `publishRate`
+  is the case that made this necessary: it comes from a `message_stats` block
+  that a broker with `rates_mode = none` simply does not have, and an absent
+  block is not a publish rate of nought.
+- **A settle window over the lagging statistics.** The management API's depths
+  and counts refresh on `collect_statistics_interval` rather than on every
+  publish — `scripts/blue-green-lab.sh` found its own `seed` reporting zeroes
+  for queues it had just filled — so a guard is satisfied by a run of readings
+  spanning fifteen seconds rather than by one, and a guard whose timeout is
+  shorter than that window is refused before the run starts. A drain's guard
+  also waits for the shovel to have torn itself down, which is a fact about the
+  movement rather than a number out of the statistics database.
+- **A preflight that refuses the run rather than the step.** A missing
+  capability, a cluster the file names and the run has not got, a drain whose
+  patterns select nothing, a guard with no timeout, an external endpoint switch
+  in a run with nobody watching: all of them stop the cutover before the first
+  write. Each would otherwise surface at the step that hit it, with the drain
+  done and the source empty.
+- **Rollback, derived from what actually happened.** Not from the plan: a
+  cutover that stopped before the drain has moved nothing, and a rollback built
+  from the plan would declare a shovel on a cluster that does not need one. The
+  endpoint goes back first and the drain runs the other way, which is
+  [the documented order](docs/blue-green.md). A topology copy, a connection
+  close, a mirror and an announcement are deliberately not inverted, and the
+  code says why for each.
+- **A writing management client that does not weaken the read-only one.**
+  `ReadOnlyAdmin` in `acemq-infra-rabbitmq` is untouched and that module still
+  contains no method that writes to a broker — not none that are called, none
+  that exist. The writing client is a different class with a different name in a
+  different module, so `plan` remains structurally incapable of writing: every
+  arrow still points at `acemq-infra-core`, which still has no broker client on
+  its classpath.
+
+### Not done, deliberately
+
+- **No `apply` and no `--dry-run` on the CLI yet.** The executor is a library
+  with no command over it, which is the seam the second half of this phase
+  starts from. docs/library.md says exactly what to call.
+- **No integration test against `scripts/blue-green-lab.sh` yet.** The step
+  sequencing, the guard arithmetic, the settle window, what an abort does to a
+  shovel it declared and the rollback derivation are all covered without a
+  broker; the cutover-then-rollback test against two real clusters is the other
+  half of this phase.
+
 ## [0.1.0] - 2026-09-21
 
 **This release plans a cutover and writes nothing to any broker.** That is
