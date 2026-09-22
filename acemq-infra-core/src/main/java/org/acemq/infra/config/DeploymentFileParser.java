@@ -147,15 +147,52 @@ public final class DeploymentFileParser {
                 mapping(root, "rollback", "").map(this::rollback),
                 mapping(root, "streams", "").map(block -> new Streams(
                         bool(block, "acknowledged", "streams"),
-                        // Kept as written. docs/message-state.md shows `next` and names `first`,
-                        // `last`, a timestamp and an absolute offset in prose without ever
-                        // enumerating them as a closed set -- and an absolute offset is a number
-                        // rather than a word, so there is no vocabulary here to close.
-                        string(block, "restartAt", "streams"),
+                        restartAt(block),
                         string(block, "note", "streams"),
                         block.location())),
                 unknownKeys(root, "", TOP_LEVEL_KEYS),
                 root.location());
+    }
+
+    /**
+     * {@code streams.restartAt}, which is a value or a mapping of stream names to values.
+     *
+     * <p>The two spellings are a shape decision rather than a content one, so they are settled
+     * here: a scalar is one answer for every stream in the scope, a mapping is one answer per
+     * stream, and the difference matters to the plan because a mapping can leave a stream out and
+     * a scalar cannot. What the answers themselves say is kept as written — docs/message-state.md
+     * shows {@code next} and names {@code first}, {@code last}, a timestamp and an absolute offset
+     * in prose without ever enumerating them as a closed set, and an absolute offset is a number
+     * rather than a word, so there is no vocabulary here to close.
+     */
+    private RestartAt restartAt(YamlNode.Mapping block) {
+        Optional<YamlNode> node = present(block, "restartAt");
+        if (node.isEmpty()) {
+            return RestartAt.none();
+        }
+        if (node.get() instanceof YamlNode.Scalar scalar) {
+            return RestartAt.everywhere(scalar.text());
+        }
+        if (!(node.get() instanceof YamlNode.Mapping perStream)) {
+            problem(node.get().location(), "streams.restartAt", "expected a restart position or a"
+                    + " mapping of stream names to restart positions, found "
+                    + node.get().describe());
+            return RestartAt.none();
+        }
+        Map<String, String> byStream = new LinkedHashMap<>();
+        for (String stream : perStream.keys()) {
+            YamlNode value = perStream.get(stream).orElseThrow();
+            if (value instanceof YamlNode.Scalar scalar) {
+                byStream.put(stream, scalar.text());
+                continue;
+            }
+            // A named stream with nothing against it is not the same as a stream the file never
+            // named: it is a line somebody meant to finish, and reading it as absent would send
+            // the reader to the plan's refusal about coverage instead of to the line itself.
+            problem(value.location(), "streams.restartAt." + stream,
+                    "expected a restart position, found " + value.describe());
+        }
+        return RestartAt.perStream(byStream);
     }
 
     private DeploymentFile.Metadata metadata(YamlNode.Mapping root) {

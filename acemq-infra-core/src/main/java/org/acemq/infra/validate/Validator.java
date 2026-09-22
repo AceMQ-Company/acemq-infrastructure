@@ -459,11 +459,18 @@ public final class Validator {
      *
      * <p>Whether a stream is actually in scope is a question about the estate and belongs to the
      * plan — this validator never sees a broker. What it can check is that the block says something
-     * coherent, and there is one incoherent thing a file can say: a {@code restartAt} with no
-     * {@code acknowledged}. That reads like a setting being applied, and nothing here applies it.
-     * An offset is a position in a log and the position a consumer resumes from is the
-     * {@code x-stream-offset} its own client asked for; the field is a statement of belief that the
-     * plan holds up against the live consumers, and a belief nobody has signed is not a gate.
+     * coherent, and there are two incoherent things a file can say. The first is a
+     * {@code restartAt} with no {@code acknowledged}. That reads like a setting being applied, and
+     * nothing here applies it. An offset is a position in a log and the position a consumer
+     * resumes from is the {@code x-stream-offset} its own client asked for; the field is a
+     * statement of belief that the plan holds up against the live consumers, and a belief nobody
+     * has signed is not a gate.
+     *
+     * <p>The second is a {@code restartAt} written as a mapping that names no stream. Which
+     * streams are in scope needs a broker and this does not have one, so the plan is where a
+     * mapping that misses one of them is refused — but a mapping with nothing in it misses every
+     * stream there could possibly be, and that is knowable from the file alone. Saying so at lint
+     * time costs a reader a probe of two clusters.
      */
     private void streams() {
         Optional<Streams> block = document.streams();
@@ -471,7 +478,13 @@ public final class Validator {
             return;
         }
         Streams streams = block.get();
-        if (streams.acknowledged().isEmpty() && streams.restartAt().isPresent()) {
+        if (streams.restartAt().perStream() && streams.restartAt().streams().isEmpty()) {
+            error("streams", "restartAt is a mapping and it names no stream. Written that way it "
+                    + "is one line per stream in the drain's scope, and a plan refuses a stream it "
+                    + "finds no line for — so this confirms nothing about anything "
+                    + "(docs/message-state.md)", streams.location());
+        }
+        if (streams.acknowledged().isEmpty() && streams.restartAt().written()) {
             error("streams", "restartAt is set and acknowledged is not. restartAt does not move an "
                     + "offset — nothing can — it says what you believe the consumers are configured "
                     + "to do, and the plan checks it against them. The confirmation is "

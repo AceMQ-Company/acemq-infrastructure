@@ -40,14 +40,21 @@ import org.acemq.infra.yaml.Location;
  * setting and was in fact a belief would be worse than no field, which is why it says so here and
  * in the plan output rather than only in the documentation.
  *
+ * <p>It is a {@link RestartAt} rather than a string because one estate can owe two different
+ * answers — {@code orders.events} accepting a gap while {@code audit.events} replays the log — and
+ * a scalar could not describe that estate at all. The scalar spelling still means what it always
+ * meant, and which of the two a file wrote is the difference between a stream nobody mentioned
+ * being covered and it being a refusal.
+ *
  * @param acknowledged whether the operator has confirmed what will happen to the offsets
- * @param restartAt where the operator believes the consumers will resume; compared against each
- *     consumer's {@code x-stream-offset}, never written to anything
+ * @param restartAt where the operator believes the consumers will resume, for everything in scope
+ *     or for one stream at a time; compared against each consumer's {@code x-stream-offset}, never
+ *     written to anything
  * @param note why the gap or the replay is acceptable, carried into the plan so that the reviewer
  *     sees the reasoning beside the projection rather than in a ticket
  * @param location where the {@code streams:} block is written
  */
-public record Streams(Optional<Boolean> acknowledged, Optional<String> restartAt,
+public record Streams(Optional<Boolean> acknowledged, RestartAt restartAt,
                       Optional<String> note, Location location) {
 
     /** Whether the file has said, in writing, that the restart positions are accepted. */

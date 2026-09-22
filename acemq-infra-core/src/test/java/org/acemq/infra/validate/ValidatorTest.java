@@ -545,6 +545,45 @@ class ValidatorTest {
                     message.contains("acknowledged is false"));
         }
 
+        /**
+         * A mapping with nothing in it names no stream, so it can confirm nothing about any of
+         * them. The plan would refuse it once it knew what was in scope; this saves a probe.
+         */
+        @Test
+        void refusesAPerStreamRestartPositionThatNamesNoStream() {
+            ValidationReport report = validate("streams:\n  acknowledged: true\n  restartAt: {}\n"
+                    + around("""
+                    deployment:
+                      operation: blueGreen
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                    """));
+
+            assertThat(errors(report)).anyMatch(message ->
+                    message.contains("restartAt is a mapping and it names no stream"));
+        }
+
+        @Test
+        void acceptsARestartPositionWrittenOneStreamAtATime() {
+            ValidationReport report = validate("""
+                    streams:
+                      acknowledged: true
+                      restartAt:
+                        orders.events: next
+                        audit.events: first
+                      note: "audit.events consumers accept the gap; replay from the warehouse"
+                    """ + around("""
+                    deployment:
+                      operation: blueGreen
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                    """));
+
+            assertThat(errors(report)).isEmpty();
+        }
+
         @Test
         void acceptsTheBlockTheDocumentationWritesOut() {
             ValidationReport report = validate("""

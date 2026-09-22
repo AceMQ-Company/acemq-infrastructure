@@ -258,6 +258,58 @@ class DeploymentFileParserTest {
         assertThat(mirror.upstream().orElseThrow().ackMode()).contains("onConfirm");
     }
 
+    /**
+     * Both spellings of {@code restartAt}, which are a shape decision and therefore this one's.
+     *
+     * <p>A scalar is one answer for the whole scope and has to keep meaning that, because files
+     * written before the mapping existed say it. A mapping is one answer per stream, kept in the
+     * order it was written so that a plan listing the streams it did not cover lists them the way
+     * the reader wrote them.
+     */
+    @Test
+    void readsARestartPositionWrittenEitherWay() {
+        DeploymentFile everywhere = Fixtures.parse("streams:\n  restartAt: next\n"
+                + Fixtures.around("deployment: { operation: blueGreen, from: blue, to: green }\n"));
+        assertThat(everywhere.streams().orElseThrow().restartAt().everywhere()).contains("next");
+        assertThat(everywhere.streams().orElseThrow().restartAt().perStream()).isFalse();
+        assertThat(everywhere.streams().orElseThrow().restartAt().forStream("anything.at.all"))
+                .contains("next");
+
+        DeploymentFile perStream = Fixtures.parse("""
+                streams:
+                  restartAt:
+                    orders.events: next
+                    audit.events: first
+                """ + Fixtures.around("deployment: { operation: blueGreen, from: blue, to: green }\n"));
+        RestartAt restartAt = perStream.streams().orElseThrow().restartAt();
+        assertThat(restartAt.perStream()).isTrue();
+        assertThat(restartAt.streams()).containsExactly("orders.events", "audit.events");
+        assertThat(restartAt.forStream("audit.events")).contains("first");
+        assertThat(restartAt.forStream("orders.ledger")).isEmpty();
+        assertThat(restartAt.everywhere()).isEmpty();
+    }
+
+    @Test
+    void refusesARestartPositionThatIsNeitherAValueNorAMapping() {
+        assertThatThrownBy(() -> Fixtures.parse("streams:\n  restartAt: [next, first]\n"
+                + Fixtures.around("deployment: { operation: blueGreen, from: blue, to: green }\n")))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("streams.restartAt")
+                .hasMessageContaining("expected a restart position or a mapping of stream names");
+    }
+
+    @Test
+    void refusesAStreamNamedWithNoRestartPositionAgainstIt() {
+        assertThatThrownBy(() -> Fixtures.parse("""
+                streams:
+                  restartAt:
+                    orders.events:
+                """ + Fixtures.around("deployment: { operation: blueGreen, from: blue, to: green }\n")))
+                .isInstanceOf(ConfigException.class)
+                .hasMessageContaining("streams.restartAt.orders.events")
+                .hasMessageContaining("expected a restart position, found nothing");
+    }
+
     /** Absent and empty are different questions, and the validator answers them differently. */
     @Test
     void tellsAnAbsentStepListFromAnEmptyOne() {
