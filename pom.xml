@@ -74,6 +74,27 @@
     <module>acemq-infra-cli</module>
   </modules>
 
+  <!-- Phase 4's module is not in that list, and the omission is the design.
+       acemq-infra-native builds a GraalVM image and then runs the cutover suite
+       against it, which is minutes rather than seconds and needs a toolchain an
+       ordinary `mvn verify` has no reason to demand. It joins the reactor under
+       -Pnative and nowhere else.
+
+       What it must not become is a suite that only a nightly ever runs.
+       docs/shape.md is unambiguous that a green jar proves nothing about the
+       artifact users get, so ci.yml runs this profile on every push and every
+       pull request, on the two Linux architectures that ship. The profile is
+       here to keep the toolchain optional for a person reading the code, not to
+       keep the binary optional for the build. -->
+  <profiles>
+    <profile>
+      <id>native</id>
+      <modules>
+        <module>acemq-infra-native</module>
+      </modules>
+    </profile>
+  </profiles>
+
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>

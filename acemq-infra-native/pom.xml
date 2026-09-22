@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.acemq</groupId>
+    <artifactId>acemq-infra-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>acemq-infra-native</artifactId>
+  <packaging>jar</packaging>
+
+  <name>AceMQ Infrastructure Native Image</name>
+  <description>Builds the acemq-infra binary with GraalVM and then runs the cutover suite against
+    it. The binary is what phase 4 distributes; this module is where the claim that it works is
+    checked, because a green jar proves nothing about the artifact users get.</description>
+
+  <properties>
+    <!-- Nothing here is a library. The binary leaves as a release asset, not as
+         a Maven coordinate, so the empty jar this module produces must not go
+         anywhere near the feed. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+    <maven.install.skip>true</maven.install.skip>
+
+    <native.maven.plugin.version>0.10.6</native.maven.plugin.version>
+
+    <!-- What the image is called on disk, which is also what a person types.
+         The release workflow renames the copy it uploads to carry the platform;
+         what comes out of the build keeps the plain name so that every command
+         in docs/install.md is the command this suite actually ran. -->
+    <native.image.name>acemq-infra</native.image.name>
+  </properties>
+
+  <dependencies>
+    <!-- The whole application, through the module a person runs. Everything
+         else arrives transitively, which is the point: an image built from a
+         narrower classpath than the CLI's own would be an image of something
+         nobody ships. -->
+    <dependency>
+      <groupId>org.acemq</groupId>
+      <artifactId>acemq-infra-cli</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+    </dependency>
+
+    <!-- The same estate acemq-infra-execute's integration tests build, and for
+         the same reason: two separate single-node clusters on one Docker
+         network. What differs is only the thing being driven. There the
+         executor is called in this JVM; here a subprocess is started and the
+         assertions are made against the same two brokers afterwards. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>rabbitmq</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.rabbitmq</groupId>
+      <artifactId>amqp-client</artifactId>
+      <version>${amqp.client.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- acemq-java-rabbitmq-admin is deliberately NOT declared here, and the
+         reason is worth a paragraph because getting it wrong produced a binary
+         that built cleanly and died on its first command.
+
+         The suite reads both clusters back through that client after the binary
+         has finished with them, so the obvious thing is to declare it in test
+         scope. Doing that makes a directly declared test-scope dependency win
+         over the compile-scope one this module already has transitively through
+         acemq-infra-cli — Maven takes the nearest declaration, scope and all —
+         and the management client drops off the image's classpath. The image
+         still builds. It then fails on any command that touches a broker with
+         "Could not initialize class RabbitProbe" and no cause attached, which is
+         a remarkably good imitation of a missing reflection registration and
+         cost an hour of looking for one.
+
+         It arrives at compile scope through the CLI, which is where the shipped
+         classpath gets it from too, so the tests can see it and the image is
+         built from exactly what a user runs. -->
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.graalvm.buildtools</groupId>
+        <artifactId>native-maven-plugin</artifactId>
+        <version>${native.maven.plugin.version}</version>
+        <extensions>true</extensions>
+        <executions>
+          <execution>
+            <id>build-native</id>
+            <goals>
+              <goal>compile-no-fork</goal>
+            </goals>
+            <phase>package</phase>
+          </execution>
+        </executions>
+        <configuration>
+          <imageName>${native.image.name}</imageName>
+          <mainClass>org.acemq.infra.cli.Main</mainClass>
+
+          <!-- The shared reachability-metadata repository is off, which is a
+               change from the plugin's default and is deliberate.
+
+               It is a remote index of hand-written metadata for popular
+               libraries, and it would happily supply some of what this image
+               needs. Two reasons not to let it. A release build would then
+               depend on a network fetch for its correctness, and the same tag
+               built on a runner with no route to it would produce a different
+               binary without saying so. And the metadata this application needs
+               would live in somebody else's repository rather than in this one,
+               where the four dependencies that matter are small enough to
+               register by hand and where a reviewer can read the list.
+
+               What that costs is that a missing registration is ours to find.
+               That is what the suite in this module is for. -->
+          <metadataRepository>
+            <enabled>false</enabled>
+          </metadataRepository>
+          <buildArgs>
+            <!-- The binary is downloaded by strangers onto machines this build
+                 has never seen. Without this, native-image tunes for the
+                 runner's own processor and the result dies with an illegal
+                 instruction on anything older — a crash with no message, on
+                 somebody else's pipeline, in the middle of a cutover. The build
+                 log recommends -march=native for speed; for something published
+                 as a download that recommendation is exactly backwards. -->
+            <buildArg>-march=compatibility</buildArg>
+
+            <!-- A stack trace from a cutover is evidence. Without this, frames
+                 are reported as unknown, which turns the one artifact an
+                 operator can send you into a shrug. -->
+            <buildArg>-H:+ReportExceptionStackTraces</buildArg>
+
+            <!-- Two flags are deliberately absent, and both are absences from
+                 the prior art rather than oversights.
+
+                 The no-fallback flag, which acemq-java-amqp passes and which
+                 its docs/native-image.md calls the thing that makes the test a
+                 gate, is deprecated and inert on GraalVM for JDK 25: "No
+                 effect, no replacement available", because a fallback image is
+                 no longer something native-image can produce. Carrying it would
+                 add two warnings to every build in exchange for nothing, and a
+                 flag that does nothing is worse than an absent one — somebody
+                 reads it and believes a guard is in place. The guarantee it
+                 used to give belongs to the platform now.
+
+                 The enable-url-protocols flag is deprecated for a similar
+                 reason, and its replacement is not another flag: it is a test
+                 that dials https and asserts what comes back. NativeHttpsIT is
+                 that test, because a protocol nothing exercises is a protocol
+                 nobody knows is there. -->
+          </buildArgs>
+        </configuration>
+      </plugin>
+
+      <!-- The binary is handed to the suite by absolute path rather than found
+           by it. A test that searched for an executable could find yesterday's,
+           and a pass on a binary that was never built is the exact failure
+           -Pnative exists to prevent. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <acemq.infra.binary>${project.build.directory}/${native.image.name}</acemq.infra.binary>
+            <!-- The published examples, which the binary is pointed at directly.
+                 ci.yml already asserts that every one of them validates and that
+                 every file in examples/rejected does not, against
+                 scripts/lint-deployment.py. Neither of those is what a user
+                 runs, and a rule that has stopped being reachable in a native
+                 image looks exactly like a rule that has stopped firing. -->
+            <acemq.infra.examples>${project.basedir}/../examples</acemq.infra.examples>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

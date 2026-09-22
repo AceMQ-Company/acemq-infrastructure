@@ -1,0 +1,135 @@
+{
+  "comment": [
+    "Every type acemq-java-rabbitmq-admin binds a management API response into.",
+    "",
+    "Jackson reaches these through an @JsonProperty-annotated constructor and no call site names it, so a closed-world compiler removes what nothing appears to use. Without this file the image builds without a murmur and then reports every cluster as unreachable: 'could not read the management API's answer for whoami. This is usually something other than RabbitMQ answering on that port.' It is not something else answering. It is Jackson being handed a class it cannot construct, and the message is the probe being tactful about a failure it has no way to diagnose. That is exactly the shape docs/shape.md warns about -- a green jar, a green build, and a binary that cannot talk to a broker.",
+    "",
+    "The whole model is registered rather than the subset the tests happened to touch. The GraalVM tracing agent was run over the integration suite and named ten of these; the eleventh, CurrentUser, is the one the first real run died on, because whoami is called by the probe and the executor's own tests assemble their clusters by hand. A list derived from what a test run reached is a list that is exactly as complete as the test run, which is the trap this file exists to get out of. The set here is closed and enumerable -- it is every type in that library carrying @JsonProperty -- so it can be checked against the library rather than against a log.",
+    "",
+    "This file's real home is acemq-java-rabbitmq-admin, whose jars should carry their own reachability metadata so that every application does not repeat this. It sits here until they do. It is in this module rather than in acemq-infra-execute, which reads the same client for its own reasons, because GraalVM merges metadata across the whole classpath and one copy is easier to keep true than two; the two modules are siblings and neither can see the other, but nothing builds an image of one without the other.",
+    "",
+    "Nothing else in this repository needs a registration. SnakeYAML is used through compose(), which walks a node tree and constructs none of our types, and the configuration model is built by hand from that tree -- which is why the deployment file model, the enums parsed from strings and the sealed step types are all absent from this file. That was the reason the parent pom gave for reading YAML that way, and this is the first build that proves it was worth it."
+  ],
+  "reflection": [
+    {
+      "type": "org.acemq.rabbitmq.admin.BindingInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ChannelInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ConnectionInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ConsumerInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.CurrentUser",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.DeprecatedFeatureInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ExchangeInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.FeatureFlagInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.FederationLinkInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.GlobalParameterInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.LimitInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.NodeInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ParameterInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.PermissionInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.PolicyInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.QueueInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ShovelInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.TopicPermissionInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.UserInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.VhostInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredMethods": true,
+      "allDeclaredFields": true
+    }
+  ]
+}
