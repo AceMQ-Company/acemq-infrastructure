@@ -172,7 +172,7 @@ its configured offset, and requires explicit confirmation in the file:
 ```yaml
 streams:
   acknowledged: true
-  restartAt: next        # per stream, or per consumer group
+  restartAt: next        # one answer, for every stream in the scope
   note: "audit.events consumers accept the gap; replay from the warehouse"
 ```
 
@@ -199,6 +199,41 @@ held up against them — a file that accepts a gap, over an estate whose consume
 replay the entire log, has acknowledged the opposite of what will happen, and
 that is refused rather than warned about. A confirmation about the wrong
 consequence is not a confirmation.
+
+Which is why it can also be written one stream at a time. An estate where
+`orders.events` consumers skip the window and `orders.ledger` consumers replay
+the whole log owes two answers at once, and no single value is a true statement
+about it — so every honest file for that estate was refused, and the only way
+past the refusal was to stop running the tool:
+
+```yaml
+streams:
+  acknowledged: true
+  restartAt:
+    orders.events: next
+    orders.ledger: first
+  note: "audit.events consumers accept the gap; replay from the warehouse"
+```
+
+Written that way it has to name **every** stream the scope contains. A stream
+with no line is a refusal, not a default: falling back to anything at all —
+`next`, or whatever the other streams said — would let `acknowledged: true` sign
+for a consequence the file never described, which is the one failure the
+confirmation exists to prevent, and it would do it while looking like a finished
+file rather than a half-written one. A line naming a stream the drain is not
+moving is checked against nothing and is said rather than refused. The scalar
+still means what it always meant: one answer, covering the whole scope.
+
+The stream is as fine as the key gets. RabbitMQ does have a notion of a consumer
+group — single active consumer groups the consumers that share a stream *and a
+name* — but that name belongs to the stream protocol, and what the plan reads is
+`/api/consumers`, which carries the queue, the channel and the consumer's
+arguments and nothing of the kind. A consumer here is queue plus connection plus
+user, and the user is an authentication identity rather than a role: two
+processes connecting as `audit-writer` can ask for different offsets. A key that
+can hold two answers is not a key, so a single stream whose own consumers
+disagree with each other still cannot be written down — that file is refused,
+with the disagreement named, and the fix is to make the consumers agree.
 
 And if the consumers cannot be listed at all, the plan refuses for the same
 reason the [canary's scope check](canary.md) does: `streams.acknowledged`

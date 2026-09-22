@@ -603,18 +603,35 @@ perform.
 
 **`streams:` is a documented top-level key with no documented body.** The linter
 accepts it and checks nothing inside; [the roadmap](roadmap.md)'s worked plan
-says "streams.acknowledged is set"; [canary](canary.md) calls it "the
-`streams.acknowledged` confirmation". No page writes the block out. The model
-holds a single boolean, which is the smallest thing that satisfies all three,
-and it will need revisiting when stream handling arrives in phase 3.
+says "streams.acknowledged is set", and its phase 3 entry calls it "the
+`streams.acknowledged` confirmation". Only [message state](message-state.md)
+writes the block out at all, and it shows `acknowledged`, `restartAt` and `note`
+in an example no other page refers to. Phase 1 modelled the boolean alone,
+because it was the smallest thing that satisfied every page that named the key;
+phase 3 added the other two, when there was finally a projection for them to be
+checked against.
 
-The consequence reached the plan output. The roadmap's worked warning ends
-"consumers restart at `next`", which is a `streams.restartAt` the model does not
-have, so the plan says what [message state](message-state.md) can support
-instead — that every consumer restarts at whatever its `x-stream-offset` says.
 A stream in the drain's scope with no `streams.acknowledged: true` in the file
 is a **refusal**, not a warning, because the consequence — a week of
-reprocessing, or a silent gap — is not visible in the estate afterwards.
+reprocessing, or a silent gap — is not visible in the estate afterwards. And
+`restartAt` sets nothing, which is the field's whole difficulty: it reads like a
+setting, nothing here can move an offset, and its actual job is to be held up
+against what the live consumers asked for. The roadmap's worked warning ends
+"consumers restart at `next`", which is that field being written as a fact about
+the estate rather than as an instruction.
+
+The comment beside it in message state said "per stream, or per consumer group",
+and only half of that was buildable. Per stream is now the mapping the field
+accepts, and it exists because an estate owing two different answers had no
+honest file at all while the field was one scalar. Per consumer group is not
+buildable: RabbitMQ's groups are the single-active-consumer ones, which are
+named through the stream protocol, and `/api/consumers` — where everything the
+projection knows comes from — carries the queue, the channel and the consumer's
+arguments and no name of that kind. The finest identity that listing supports is
+queue plus connection plus user, and a user is an authentication identity rather
+than a role, so two processes wearing one can and do disagree about where they
+restart. The page now says stream, because that is where the answers stop being
+ambiguous.
 
 **A queue pattern's syntax is not written down anywhere.**
 `queues: ["orders.*", "!orders.audit"]` appears in three pages and no page says

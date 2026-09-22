@@ -72,6 +72,20 @@ canary is safe, and stream handling.
   actually asked for, and a file that acknowledged one consequence over an
   estate that will produce another is refused. A confirmation about the wrong
   thing is not a confirmation.
+- **`streams.restartAt`, written one stream at a time**, as well as the single
+  value it has always been. An estate where `orders.events` consumers skip the
+  window and `orders.ledger` consumers replay the whole log owes two answers at
+  once, and while the field was one scalar no value was a true statement about
+  it — so every honest file for that estate was refused and the only way past
+  the refusal was to stop running the tool. Written as a mapping it has to name
+  every stream in the drain's scope: a stream with no line is a refusal rather
+  than a default, because falling back to anything at all would let
+  `acknowledged: true` sign for a consequence the file never described, which is
+  the one failure the whole check exists to prevent. The stream is the finest
+  key there is — RabbitMQ's consumer groups are named through the stream
+  protocol and `/api/consumers` carries no such name, and the user it does carry
+  is an authentication identity rather than a role — so one stream whose own
+  consumers disagree is still a refusal, with the disagreement named.
 - **A `scope` block in the plan output**, above the numbered steps, saying what
   the scope resolved to on the source and who is attached to it. For a canary
   that block is the operation; the other two operations do not print one.
