@@ -12,8 +12,8 @@ clusters**.
 > **Status: `validate`, `plan` and `apply` work against real RabbitMQ
 > clusters.** [Milestone one](docs/roadmap.md) — the configuration model, the
 > validator, `probe()`, the default step list and the planner — was released as
-> `0.1.0` and writes nothing to a broker. [Phase 2](docs/roadmap.md) is now on
-> `main`: the executor carries every step of the default blue/green list out
+> `0.1.0` and writes nothing to a broker. [Phase 2](docs/roadmap.md) shipped in
+> `0.2.0`: the executor carries every step of the default blue/green list out
 > against two clusters, `apply --dry-run` re-probes both and reports what each
 > step would do at this moment, and the rollback is derived from what a run
 > actually did and tested by running one — a cutover, then the rollback, with

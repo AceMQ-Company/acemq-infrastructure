@@ -9,7 +9,7 @@ All notable changes to this repository are recorded here. The format follows
 [phase 2](docs/roadmap.md) — the executor, `apply`, and the rollback that a test
 actually runs.
 
-## [Unreleased]
+## [0.2.0] - 2026-09-22
 
 ### Added
 
