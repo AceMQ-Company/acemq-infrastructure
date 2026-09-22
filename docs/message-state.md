@@ -179,6 +179,32 @@ streams:
 That is not a solution. It is a refusal to pretend, which is the only thing on
 offer here.
 
+The projection is per consumer, not per stream, because one stream's consumers
+routinely disagree with each other — and a single sentence about offsets not
+travelling is true of all of them and answers the question about none of them:
+
+```
+· orders.events · audit-writer (10.0.0.12:51002): `first` — replays the
+  target's entire retained log from the beginning...
+· orders.events · ledger-tailer (10.0.0.13:51003): `next` — starts after
+  whatever the target's log holds when it attaches...
+· orders.events · search-indexer (10.0.0.14:51004): no x-stream-offset, which
+  RabbitMQ reads as `next`...
+```
+
+`restartAt` sets nothing, and nothing here can: the position a consumer resumes
+from is the `x-stream-offset` its own client asked for. It is a statement of
+what you believe the consumers are configured to do, and its whole job is to be
+held up against them — a file that accepts a gap, over an estate whose consumers
+replay the entire log, has acknowledged the opposite of what will happen, and
+that is refused rather than warned about. A confirmation about the wrong
+consequence is not a confirmation.
+
+And if the consumers cannot be listed at all, the plan refuses for the same
+reason the [canary's scope check](canary.md) does: `streams.acknowledged`
+confirms a consequence, and a run that cannot say what the consequence is has
+nothing to be confirmed.
+
 ## Policies that start working before you want them to
 
 An imported definitions document applies its policies immediately. A

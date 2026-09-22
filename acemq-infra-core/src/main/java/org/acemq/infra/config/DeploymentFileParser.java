@@ -146,7 +146,14 @@ public final class DeploymentFileParser {
                 mapping(root, "deployment", "").map(this::deployment),
                 mapping(root, "rollback", "").map(this::rollback),
                 mapping(root, "streams", "").map(block -> new Streams(
-                        bool(block, "acknowledged", "streams"), block.location())),
+                        bool(block, "acknowledged", "streams"),
+                        // Kept as written. docs/message-state.md shows `next` and names `first`,
+                        // `last`, a timestamp and an absolute offset in prose without ever
+                        // enumerating them as a closed set -- and an absolute offset is a number
+                        // rather than a word, so there is no vocabulary here to close.
+                        string(block, "restartAt", "streams"),
+                        string(block, "note", "streams"),
+                        block.location())),
                 unknownKeys(root, "", TOP_LEVEL_KEYS),
                 root.location());
     }

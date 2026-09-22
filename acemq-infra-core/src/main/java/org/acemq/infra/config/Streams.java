@@ -27,17 +27,31 @@ import org.acemq.infra.yaml.Location;
  * the tool's whole contribution is to say what will happen to each consumer and make somebody
  * confirm it before the plan proceeds.
  *
- * <p>This block is underspecified in the documentation as it stands, and this record reflects
- * exactly what the documentation says rather than what a full design would want.
- * scripts/lint-deployment.py accepts {@code streams} as a top-level key and checks nothing inside
- * it; docs/roadmap.md's worked plan output says "streams.acknowledged is set"; docs/canary.md
- * calls it "the {@code streams.acknowledged} confirmation". No page writes the block out. A single
- * boolean is the smallest thing that satisfies all three, and it is modelled rather than
- * invented — the per-consumer projection those pages describe arrives with stream handling in
- * phase 3, and this field will need revisiting then.
+ * <p>Phase 1 modelled only {@code acknowledged}, because that was the only field any page named.
+ * docs/message-state.md does write the block out — {@code acknowledged}, {@code restartAt} and
+ * {@code note} — and phase 3 is where the projection that uses the other two arrives, so they are
+ * modelled here now.
+ *
+ * <p>{@code restartAt} does <strong>not</strong> set anything. Nothing in this tool can: an offset
+ * is a position in a log and the position a consumer resumes from is the {@code x-stream-offset}
+ * its own client asked for. So the field is a statement of what the operator believes the
+ * consumers are configured to do, and its whole value is that the plan can hold it up against what
+ * the consumers actually asked for and say when the two disagree. A field that looked like a
+ * setting and was in fact a belief would be worse than no field, which is why it says so here and
+ * in the plan output rather than only in the documentation.
  *
  * @param acknowledged whether the operator has confirmed what will happen to the offsets
+ * @param restartAt where the operator believes the consumers will resume; compared against each
+ *     consumer's {@code x-stream-offset}, never written to anything
+ * @param note why the gap or the replay is acceptable, carried into the plan so that the reviewer
+ *     sees the reasoning beside the projection rather than in a ticket
  * @param location where the {@code streams:} block is written
  */
-public record Streams(Optional<Boolean> acknowledged, Location location) {
+public record Streams(Optional<Boolean> acknowledged, Optional<String> restartAt,
+                      Optional<String> note, Location location) {
+
+    /** Whether the file has said, in writing, that the restart positions are accepted. */
+    public boolean confirmed() {
+        return acknowledged.orElse(false);
+    }
 }
