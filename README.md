@@ -19,7 +19,12 @@ clusters**.
 > actually did and tested by running one — a cutover, then the rollback, with
 > the estate asserted back where it started and the duplicate count measured
 > rather than described. `apply` prints the plan and stops to ask before the
-> first write. See [the roadmap](docs/roadmap.md) for the build order and
+> first write. [Phase 3](docs/roadmap.md) shipped in `0.3.0`: `canary` moves one
+> workload at a time on the same machinery, and refuses unless the scope is
+> closed — every consumer of a scoped queue named, and every named service
+> consuming nothing the scope left behind. `mirror` is an observation with no
+> cutover and no rollback, built from a federated exchange and never a federated
+> queue. See [the roadmap](docs/roadmap.md) for the build order and
 > [the library](docs/library.md) for what exists today.
 
 The five AceMQ client libraries already do the client half of a cutover — drain,

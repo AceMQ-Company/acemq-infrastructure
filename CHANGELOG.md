@@ -4,12 +4,12 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.2.0` is released: the executor, `apply`, and the rollback that a test
-actually runs. What is unreleased below is [phase 3](docs/roadmap.md) — `canary`
-and `mirror` as real operations, the consumer check that is the only reason a
-canary is safe, and stream handling.
+`0.3.0` is released: [phase 3](docs/roadmap.md) — `canary` and `mirror` as real
+operations, the consumer check that is the only reason a canary is safe, and
+stream handling. [Phase 4](docs/roadmap.md) is distribution, and nothing of it
+is written yet.
 
-## [Unreleased]
+## [0.3.0] - 2026-09-23
 
 ### Added
 
