@@ -24,8 +24,13 @@ clusters**.
 > closed — every consumer of a scoped queue named, and every named service
 > consuming nothing the scope left behind. `mirror` is an observation with no
 > cutover and no rollback, built from a federated exchange and never a federated
-> queue. See [the roadmap](docs/roadmap.md) for the build order and
-> [the library](docs/library.md) for what exists today.
+> queue. [Phase 4](docs/roadmap.md) is on `main`: `acemq-infra` is a single
+> executable for linux-amd64, linux-arm64 and darwin-arm64 with no JVM to
+> install, there is a GitHub Action wrapping it, and the cutover suite runs
+> against the binary rather than against the jar — on every push, on both Linux
+> architectures, and again before a release publishes anything. See
+> [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
+> the build order and [the library](docs/library.md) for what exists today.
 
 The five AceMQ client libraries already do the client half of a cutover — drain,
 pause, graceful shutdown, the same way in Java, Go, .NET, Python and Ruby. None
@@ -160,12 +165,51 @@ deliberately-broken files in `examples/rejected/` are rejected, which is how the
 format stays honest while it is still only a document. See
 [`scripts/README.md`](scripts/README.md).
 
+## Installing
+
+A single executable, no JVM, about 30MB, starting in roughly ten milliseconds.
+[Installing it](docs/install.md) has the full instructions, the checksum and
+provenance checks, and the GitHub Action.
+
+```console
+$ VERSION=0.4.0 PLATFORM=linux-amd64
+$ BASE=https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION
+$ curl -fsSLO "$BASE/acemq-infra-$VERSION-$PLATFORM" && curl -fsSLO "$BASE/SHA256SUMS"
+$ grep " acemq-infra-$VERSION-$PLATFORM$" SHA256SUMS | sha256sum -c -
+$ chmod +x "acemq-infra-$VERSION-$PLATFORM" && sudo mv "acemq-infra-$VERSION-$PLATFORM" /usr/local/bin/acemq-infra
+```
+
+From a pipeline, with nothing installed:
+
+```yaml
+- uses: AceMQ-Company/acemq-infrastructure@v0.4.0
+  with:
+    command: plan
+    file: deployment.yaml
+```
+
+The library is on the [acemq.org Maven feed](https://acemq.org/maven/) for
+anybody embedding it rather than running it.
+
 ## Building
 
 ```console
 $ mvn verify
 $ java -jar acemq-infra-cli/target/acemq-infra-cli-*.jar validate -f examples/blue-green.yaml
 ```
+
+The binary is a second build, under its own profile, and it needs GraalVM:
+
+```console
+$ mvn -Pnative -pl acemq-infra-native clean verify
+```
+
+That builds the image and then runs a blue/green cutover and a canary against
+two pairs of real brokers **by starting the binary**, along with the whole
+command surface, every example, and a TLS handshake. It is the rule
+[language and shape](docs/shape.md) set for this phase: a green jar proves
+nothing about the artifact users get, so the suite runs against the artifact. CI
+does it on every push, on both Linux architectures.
 
 Java 17. Four modules: `acemq-infra-core` holds the configuration model, the
 validator and the planner and has no broker client on its classpath;

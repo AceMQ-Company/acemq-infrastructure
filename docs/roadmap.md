@@ -122,13 +122,52 @@ each offset setting will do, and the `streams.acknowledged` confirmation.
 
 ## Phase 4 — distribution
 
-GraalVM native images for linux-amd64, linux-arm64 and darwin-arm64, published
-to the acemq.org GitHub-hosted feeds with the library as a Maven artifact
-alongside. A GitHub Action wrapping the binary.
+GraalVM native images for linux-amd64, linux-arm64 and darwin-arm64, attached to
+each GitHub release with the library published as Maven artifacts alongside. A
+GitHub Action wrapping the binary. [Installing it](install.md) is the page.
 
 The CI requirement from [language and shape](shape.md) applies from the first
 native build: **the test suite runs against the binary, not the jar.** A green
 jar proves nothing about the artifact users get.
+
+That requirement is met literally. `acemq-infra-native` builds the image and then
+runs a blue/green cutover and a canary against two pairs of real brokers by
+starting the binary as a subprocess — no library call anywhere in the module —
+plus the whole command surface, every published example, every deliberately
+rejected example, and a TLS handshake. It runs on every push and every pull
+request, on both Linux architectures, and it runs again before a release
+publishes anything.
+
+It was worth the trouble on the first day. The first image this repository built
+passed every existing test, started in ten milliseconds, printed its version, and
+could not read a single management API response: `acemq-java-rabbitmq-admin`
+binds those into classes through an annotated constructor that no call site
+names, and a closed-world compiler had removed them. The jar build was green
+throughout. That is the failure [language and shape](shape.md) described, found
+where it said it would be found.
+
+Three things turned out differently from what this page and that one assumed:
+
+- **The tracing agent is not enough on its own.** Running the existing
+  integration suite under GraalVM's agent named ten of the types that needed
+  registering. The eleventh was the one the first real run died on, because it is
+  reached by a code path the executor's own tests assemble by hand. A list
+  derived from what a test run touched is exactly as complete as the test run, so
+  the registration file covers the library's whole JSON model instead.
+- **The version survives.** `--version` reads the jar manifest, which was expected
+  to come back empty in a binary and does not: `native-image` carries the
+  implementation version into the image. It is asserted rather than assumed now.
+- **`--no-fallback` is gone.** The prior art passes it and calls it the flag that
+  makes the native test a gate. On GraalVM for JDK 25 it is deprecated and inert,
+  because a fallback image is no longer something `native-image` can produce.
+
+And one thing could not be done honestly: **the rollback is not driven through
+the binary.** `Execution.rollback()` derives the undo from the steps that
+actually reached done, and there is no `rollback` command over it — the CLI has
+`validate`, `plan` and `apply` and nothing else. So the rollback, and the count
+of what it duplicated, stay tested on the JVM in `BlueGreenCutoverIT`. Adding a
+command to close that gap would be this phase changing what the tool does, which
+is the one thing it is not for.
 
 ## Phase 5 — the operator, conditionally
 

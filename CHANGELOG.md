@@ -6,8 +6,98 @@ All notable changes to this repository are recorded here. The format follows
 
 `0.3.0` is released: [phase 3](docs/roadmap.md) — `canary` and `mirror` as real
 operations, the consumer check that is the only reason a canary is safe, and
-stream handling. [Phase 4](docs/roadmap.md) is distribution, and nothing of it
-is written yet.
+stream handling. [Phase 4](docs/roadmap.md) is on `main` and unreleased: the tool
+is a binary now, and the suite runs against it.
+
+## [Unreleased]
+
+### Added
+
+- **`acemq-infra` as a native binary**, for linux-amd64, linux-arm64 and
+  darwin-arm64, attached to each release with the Maven artifacts published
+  alongside as they always were. A single executable with no JVM to install,
+  about 30MB, starting in roughly ten milliseconds against the jar's two hundred.
+  [docs/install.md](docs/install.md) is the page: how to get one, what to check
+  before trusting it, and what is registered for reflection and why.
+- **The rule this phase exists for: the test suite runs against the binary.**
+  `acemq-infra-native` builds the image and then starts it as a subprocess — no
+  library call anywhere in the module — to carry out a blue/green cutover and a
+  canary against two pairs of real brokers, with the estate read back afterwards
+  through a management client of the test's own. A binary that reported a
+  successful drain and left the messages where they were would fail. It runs on
+  every push and every pull request, on both Linux architectures, and again
+  before a release publishes anything.
+- **Reflection registration for the management API's JSON model**, in
+  `acemq-infra-rabbitmq`'s jar, covering the twenty types
+  `acemq-java-rabbitmq-admin` binds responses into. This is the whole of what a
+  native image of this tool needs, and without it the image builds silently and
+  then reports every cluster as "usually something other than RabbitMQ answering
+  on that port". The file belongs in the admin client's own jars and sits here
+  until it is there. Nothing else needed one: SnakeYAML is used through
+  `compose()` and the configuration model is built from the node tree by hand,
+  which is why the deployment file model, the enums and the sealed step types are
+  all absent from that file.
+- **A GitHub Action wrapping the binary**, so a pipeline runs a plan or an apply
+  with nothing installed. It downloads the binary for whichever runner it is on,
+  verifies the checksum, optionally verifies build provenance, runs the tool with
+  the flags spelled exactly as they are spelled on a command line, and puts what
+  it printed into the job summary — which is where a reviewer actually reads a
+  plan.
+- **A SHA256SUMS file and build provenance on every release.** The checksum
+  answers "did this arrive intact"; the attestation answers "did this come out of
+  this repository", and `gh attestation verify` checks it against a transparency
+  log. They are different questions and the documentation says which is which
+  rather than letting the word "verify" do more work than it can carry.
+- **Both branches of the one piece of reflection this repository writes.**
+  `Terminal` asks `java.io.Console.isTerminal` by reflection because the source
+  level is 17 and the method arrives in 22. The blue/green suite runs the binary
+  at a real pseudo-terminal and answers its three questions by typing; the canary
+  suite runs it through a pipe with `--yes` and an `endpoint: hook`. Neither is
+  reachable from a test that constructs a console for itself.
+- **A TLS test.** Every management URL that matters is `https` and the lab is two
+  containers on a Docker network, so without one the whole suite could pass
+  against a binary that cannot dial a real broker. `NativeHttpsIT` completes a
+  handshake against a certificate it generates, with the truststore passed as
+  `-Djavax.net.ssl.trustStore` — which is also the answer for an estate with a
+  private certificate authority, and is only true if somebody checks.
+- **Every published example and every deliberately rejected one, asserted against
+  the binary.** `ci.yml` has always made that assertion against
+  `scripts/lint-deployment.py`, and neither that nor the Java validator's own
+  suite is what a user runs. A rule that has stopped being reachable in a native
+  image looks exactly like a rule that has stopped firing.
+
+### Changed
+
+- **A release publishes nothing until the binary has moved messages.** The three
+  binaries are built and tested first; the Maven feed is written afterwards. A
+  workflow that published the jars and then discovered the binary was broken
+  would have obeyed the letter of the rule and none of it.
+- **The release notification reads off both halves.** Jars on the feed with no
+  binaries on the release is a half-shipped distribution, and announcing that as
+  finished is how somebody spends a morning looking for a download that is not
+  there.
+
+### Notes
+
+- **The rollback is not driven through the binary, and this is the one gap.**
+  `Execution.rollback()` derives the undo from the steps that actually reached
+  done and there is no command over it, so the rollback and the count of what it
+  duplicated stay tested on the JVM in `BlueGreenCutoverIT`. Adding a `rollback`
+  command to close that would be this phase changing what the tool does.
+- **The cutover suite does not run on macOS**, because GitHub's macOS runners
+  have no Docker daemon. The darwin-arm64 binary is checked for the command
+  surface, the configuration format and TLS, and the cutover is proved on both
+  Linux architectures. `ci.yml` carries a step that fails if a macOS runner ever
+  turns out to have Docker, so the reason cannot quietly stop being true.
+- **`--no-fallback` is not passed.** The prior art in `acemq-java-amqp` passes it
+  and calls it the flag that makes a native test a gate; on GraalVM for JDK 25 it
+  is deprecated and inert, because a fallback image is no longer something
+  `native-image` can produce. A flag that does nothing is worse than an absent
+  one, since somebody reads it and believes a guard is in place.
+- **The GraalVM shared reachability-metadata repository is off.** It would supply
+  some of what this image needs, at the cost of a release build whose correctness
+  depends on a network fetch and on metadata kept in somebody else's repository.
+  Four dependencies is a short enough list to register by hand and read.
 
 ## [0.3.0] - 2026-09-23
 

@@ -8,22 +8,25 @@ in Java, Go, .NET, Python and Ruby. What none of them can do is **move the
 cluster**. That is what this is for.
 
 > **Status: `validate`, `plan` and `apply` work against real RabbitMQ
-> clusters.** [Milestone one](roadmap.md) — the configuration model, the
-> validator, `probe()`, the default step list and the planner — was released as
-> `0.1.0`, and neither of its two commands writes to a broker.
-> [Phase 2](roadmap.md) is on `main`: the executor carries every step of the
-> default blue/green list out, `apply --dry-run` re-probes both clusters and
-> reports what each step would do at this moment, and the rollback is derived
-> from what a run actually did and tested by running one. `apply` prints the
-> plan and stops to ask before the first write, and the only thing that gets
-> past that question is the word `yes` typed at a terminal. All of it is
-> described in [the library](library.md).
+> clusters, and there is a binary to run them with.** [Milestone one](roadmap.md)
+> — the configuration model, the validator, `probe()`, the default step list and
+> the planner — was released as `0.1.0`, and neither of its two commands writes
+> to a broker. Phase 2 added the executor, `apply --dry-run` and a rollback
+> derived from what a run actually did; phase 3 added `canary` and `mirror` and
+> the consumer check that makes a canary safe. All of it is described in
+> [the library](library.md).
+>
+> [Phase 4](roadmap.md) is on `main`: `acemq-infra` is now a single executable
+> for linux-amd64, linux-arm64 and darwin-arm64 with no JVM to install, there is
+> a GitHub Action wrapping it, and the cutover suite runs against the binary
+> rather than against the jar on every push. See [installing it](install.md).
 
 ## The pages
 
 | Page | What it settles |
 |---|---|
 | [What this is](what-it-is.md) | The operation, why the client libraries are only half of it, and the two halves meeting |
+| [Installing it](install.md) | The binary, the GitHub Action, what to check before you trust a download |
 | [Language and shape](shape.md) | Java with a native image, and why it is a library *and* a CLI *and*, later, an operator |
 | [Broker-agnostic, honestly](broker-agnostic.md) | The provider seam, and why the capability model earns its keep on one broker |
 | [Blue/green](blue-green.md) | What a cutover is for something that holds durable state |

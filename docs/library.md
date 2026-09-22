@@ -23,7 +23,8 @@ acemq-infra-parent          the reactor
 ├── acemq-infra-core        the deployment file, what is wrong with it, and the plan
 ├── acemq-infra-rabbitmq    probe(), over acemq-java-rabbitmq-admin — reads, only
 ├── acemq-infra-execute     the executor, and the eight verbs that write
-└── acemq-infra-cli         acemq-infra validate | plan | apply
+├── acemq-infra-cli         acemq-infra validate | plan | apply
+└── acemq-infra-native      the binary, and the suite that runs against it (-Pnative)
 ```
 
 A reactor rather than one jar, for one reason that is worth stating plainly.
@@ -48,10 +49,22 @@ exactly as incapable of writing as it was; `rabbitmq` does not depend on
 `execute` and cannot see it, so the read-only client the probe holds stays
 read-only. The two never meet.
 
+`native` is the odd one and is not in the module list that an ordinary
+`mvn verify` builds: it joins the reactor under `-Pnative`, builds a GraalVM
+image of the CLI, and then runs a blue/green cutover and a canary against two
+pairs of real brokers **by starting that image as a subprocess**. It publishes
+nothing — the jar it produces is empty and is neither installed nor deployed —
+because what it makes is a release asset rather than a Maven coordinate. Why it
+exists at all, and what a missing reflection registration looks like when it is
+not there, is [installing it](install.md).
+
 The version in every pom is `0.1.0-SNAPSHOT` and stays that way. The release
 version comes from the tag and is stamped with `versions:set`, which is how the
 other repositories here avoid a number in a committed file that has to be
-remembered and bumped.
+remembered and bumped. The binary inherits it the same way: `native-image`
+carries the jar manifest's implementation version into the image, so
+`acemq-infra --version` answers with whatever the tag said, and
+`NativeCommandLineIT` asserts that it does.
 
 ## The packages, and what each one is not allowed to know
 
