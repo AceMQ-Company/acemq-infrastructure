@@ -481,8 +481,9 @@ class PlannerTest {
             Plan plan = plan("streams:\n  acknowledged: true\n  restartAt: next\n" + CUTOVER);
             assertThat(plan.ok()).isFalse();
             assertThat(plan.refusals()).anyMatch(refusal ->
-                    refusal.contains("streams.restartAt says next")
-                            && refusal.contains("audit-writer on orders.events asks for first"));
+                    refusal.contains("streams.restartAt is not what the consumers are asking for")
+                            && refusal.contains("audit-writer on orders.events asks for first"
+                                    + " where the file says next"));
         }
 
         @Test
@@ -505,6 +506,109 @@ class PlannerTest {
             assertThat(plan.refusals()).isEmpty();
             assertThat(plan.warnings()).anyMatch(warning ->
                     warning.contains("every consumer asks for next"));
+        }
+
+        /**
+         * Two streams that owe two different answers, which is the estate a scalar cannot describe.
+         *
+         * <p>{@code orders.events} is consumed by something that skips the window and
+         * {@code orders.ledger} by something that replays the whole log, and both are true at once.
+         * No single value is a correct statement about this estate, so before the mapping every
+         * honest file for it was refused and the only way to run the tool was to stop running it.
+         */
+        @Test
+        @DisplayName("accept a restartAt written one stream at a time")
+        void restartAtPerStream() {
+            Plan plan = plan("""
+                    streams:
+                      acknowledged: true
+                      restartAt:
+                        orders.events: next
+                        orders.ledger: first
+                    """ + CUTOVER, disagreeingStreams(), Probes.green().build());
+            assertThat(plan.refusals()).isEmpty();
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("every consumer asks for what streams.restartAt says for its"
+                            + " stream"));
+        }
+
+        /**
+         * The same estate, with the file wrong about one of the two.
+         */
+        @Test
+        @DisplayName("refuse the one stream the per-stream restartAt is wrong about")
+        void restartAtPerStreamThatIsWrongAboutOne() {
+            Plan plan = plan("""
+                    streams:
+                      acknowledged: true
+                      restartAt:
+                        orders.events: next
+                        orders.ledger: next
+                    """ + CUTOVER, disagreeingStreams(), Probes.green().build());
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("audit-writer on orders.ledger asks for first where the file"
+                            + " says next")
+                            && !refusal.contains("on orders.events"));
+        }
+
+        /**
+         * A mapping is allowed to be incomplete, so the incomplete one has to be the refusal.
+         *
+         * <p>A stream in scope with no line is the exact failure the confirmation exists to
+         * prevent: falling back to anything at all would let {@code acknowledged: true} sign for a
+         * consequence the file never described, and it would do it while looking like a finished
+         * file rather than a half-written one.
+         */
+        @Test
+        @DisplayName("refuse a per-stream restartAt that leaves a stream in scope unnamed")
+        void restartAtPerStreamWithAGap() {
+            Plan plan = plan("""
+                    streams:
+                      acknowledged: true
+                      restartAt:
+                        orders.events: next
+                    """ + CUTOVER, disagreeingStreams(), Probes.green().build());
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("says nothing about orders.ledger")
+                            && refusal.contains("Name every stream in scope"));
+        }
+
+        /**
+         * The line that is checked against nothing, which is worth a sentence and not a refusal.
+         */
+        @Test
+        @DisplayName("say when restartAt names a stream the drain is not moving")
+        void restartAtNamingAStreamOutOfScope() {
+            Plan plan = plan("""
+                    streams:
+                      acknowledged: true
+                      restartAt:
+                        orders.events: next
+                        orders.ledger: first
+                        warehouse.events: first
+                    """ + CUTOVER, disagreeingStreams(), Probes.green().build());
+            assertThat(plan.refusals()).isEmpty();
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("streams.restartAt names warehouse.events, which is not a"
+                            + " stream in the drain's scope on blue"));
+        }
+
+        /** Two streams in the drain's scope whose consumers want opposite things. */
+        private static ProbedCluster disagreeingStreams() {
+            return Probes.blue()
+                    .inventory(Inventory.counting()
+                            .queue("orders.new", "classic", 12, 1)
+                            .queue("orders.events", "stream", 0, 2)
+                            .queue("orders.ledger", "stream", 0, 1)
+                            .streamConsumer("orders.events", "10.0.0.9:51000", "search-indexer",
+                                    "next")
+                            .consumer("orders.events", "10.0.0.9:51001", "ledger-tailer")
+                            .streamConsumer("orders.ledger", "10.0.0.9:51002", "audit-writer",
+                                    "first")
+                            .build())
+                    .build();
         }
 
         /**

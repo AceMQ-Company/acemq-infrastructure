@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+import org.acemq.infra.config.RestartAt;
 import org.acemq.infra.config.Streams;
 import org.acemq.infra.provider.Inventory;
 
@@ -56,6 +57,13 @@ import org.acemq.infra.provider.Inventory;
  * and whose consumers are configured to replay the entire retained log has acknowledged the wrong
  * consequence, and that is refused rather than warned about: the confirmation is the gate, so a
  * confirmation about the wrong thing is not a gate at all.
+ *
+ * <p>It is written either as one value for the whole scope or as one value per stream, because an
+ * estate can owe two different answers at once and a single value could not describe that estate
+ * at all — no value matched, so every honest file was refused and the only way past the refusal
+ * was to stop running the tool. {@link RestartAt} carries which of the two spellings the file
+ * used, and the difference lands here: a stream the mapping does not name is a refusal rather than
+ * a default, for exactly the reason the field exists at all.
  */
 public final class StreamRestart {
 
@@ -113,10 +121,20 @@ public final class StreamRestart {
             return new Projection(refusals, warnings, lines);
         }
 
-        Optional<String> declared = block.flatMap(Streams::restartAt);
+        RestartAt declared = block.map(Streams::restartAt).orElseGet(RestartAt::none);
         Set<String> disagreeing = new LinkedHashSet<>();
+        Set<String> uncovered = new LinkedHashSet<>();
         int attached = 0;
         for (Inventory.Queue stream : streams) {
+            Optional<String> wanted = declared.forStream(stream.name());
+            // Before the consumers, and deliberately. Whether this stream happens to have one
+            // attached at the instant of the probe is a property of the instant; whether the file
+            // covers it is a property of the file. A mapping that only had to name the streams
+            // somebody was consuming this afternoon would be a confirmation whose reach moved
+            // with the timing of a probe.
+            if (declared.perStream() && wanted.isEmpty()) {
+                uncovered.add(stream.name());
+            }
             List<Inventory.Consumer> on = consumers.on(stream.name());
             if (on.isEmpty()) {
                 lines.add(stream.name() + ": nothing is consuming it on " + cluster + ", so there"
@@ -129,9 +147,21 @@ public final class StreamRestart {
                 String asked = consumer.streamOffset().orElse("");
                 lines.add(stream.name() + " · " + consumer.user() + " (" + consumer.connection()
                         + "): " + describe(asked));
-                declared.filter(wanted -> !wanted.equals(spelling(asked)))
-                        .ifPresent(wanted -> disagreeing.add(consumer.user() + " on "
-                                + stream.name() + " asks for " + spelling(asked)));
+                wanted.filter(one -> !one.equals(spelling(asked)))
+                        .ifPresent(one -> disagreeing.add(consumer.user() + " on "
+                                + stream.name() + " asks for " + spelling(asked)
+                                + " where the file says " + one));
+            }
+        }
+
+        for (String named : declared.streams()) {
+            if (streams.stream().noneMatch(stream -> stream.name().equals(named))) {
+                // Said rather than refused. Nothing is checked against this line, so it cannot
+                // make the confirmation wrong -- and when it is the typo it usually is, the
+                // stream it was meant to name is missing too and that half is a refusal.
+                warnings.add("streams.restartAt names " + named + ", which is not a stream in the"
+                        + " drain's scope on " + cluster + ". Nothing is checked against that"
+                        + " line: either the scope moved or the name is misspelled.");
             }
         }
 
@@ -154,17 +184,38 @@ public final class StreamRestart {
             return new Projection(refusals, warnings, lines);
         }
 
+        if (!uncovered.isEmpty()) {
+            // The case a default would quietly swallow. A mapping that names some of the scope and
+            // not the rest is exactly the failure this whole check exists to prevent -- a
+            // confirmation covering a consequence the file never described -- and it arrives
+            // looking like a complete file rather than like a missing one. So there is no
+            // fallback: not to `next`, not to the other streams' answer, not to anything.
+            refusals.add("streams.restartAt is written per stream and says nothing about "
+                    + String.join(", ", uncovered) + ", which the drain's scope includes. A stream"
+                    + " with no line would have to fall back to a position nobody wrote down, and"
+                    + " streams.acknowledged would then be signing for a consequence this file"
+                    + " never described. Name every stream in scope, or write one value for all of"
+                    + " them.");
+        }
+
         if (!disagreeing.isEmpty()) {
-            refusals.add("streams.restartAt says " + declared.orElseThrow() + " and the consumers"
-                    + " are not asking for it: " + String.join("; ", disagreeing) + ". Nothing"
+            refusals.add("streams.restartAt is not what the consumers are asking for: "
+                    + String.join("; ", disagreeing) + ". Nothing"
                     + " here can set an offset — restartAt is a statement about what the consumers"
                     + " are configured to do — so streams.acknowledged has accepted a consequence"
                     + " other than the one that will happen. Fix the consumers or fix the file.");
+        }
+
+        if (!uncovered.isEmpty() || !disagreeing.isEmpty()) {
             return new Projection(refusals, warnings, lines);
         }
 
         lines.add("streams.acknowledged is set, so the plan proceeds"
-                + declared.map(wanted -> " and every consumer asks for " + wanted).orElse("")
+                + declared.everywhere().map(wanted -> " and every consumer asks for " + wanted)
+                        .orElse(declared.perStream()
+                                ? " and every consumer asks for what streams.restartAt says for"
+                                        + " its stream"
+                                : "")
                 + ".");
         return new Projection(refusals, warnings, lines);
     }
