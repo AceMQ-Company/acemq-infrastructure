@@ -24,7 +24,7 @@ clusters**.
 > closed — every consumer of a scoped queue named, and every named service
 > consuming nothing the scope left behind. `mirror` is an observation with no
 > cutover and no rollback, built from a federated exchange and never a federated
-> queue. [Phase 4](docs/roadmap.md) is on `main`: `acemq-infra` is a single
+> queue. [Phase 4](docs/roadmap.md) shipped in `0.4.0`: `acemq-infra` is a single
 > executable for linux-amd64, linux-arm64 and darwin-arm64 with no JVM to
 > install, there is a GitHub Action wrapping it, and the cutover suite runs
 > against the binary rather than against the jar — on every push, on both Linux

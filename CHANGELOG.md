@@ -4,12 +4,12 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.3.0` is released: [phase 3](docs/roadmap.md) — `canary` and `mirror` as real
-operations, the consumer check that is the only reason a canary is safe, and
-stream handling. [Phase 4](docs/roadmap.md) is on `main` and unreleased: the tool
-is a binary now, and the suite runs against it.
+`0.4.0` is released: [phase 4](docs/roadmap.md) — the tool is a binary, and the
+suite runs against it rather than against the jar. That completes the roadmap's
+mandatory phases. [Phase 5](docs/roadmap.md), the operator, is conditional and
+gets built only if somebody asks with a real estate behind the ask.
 
-## [Unreleased]
+## [0.4.0] - 2026-09-23
 
 ### Added
 
