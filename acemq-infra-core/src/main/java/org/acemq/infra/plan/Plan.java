@@ -39,13 +39,17 @@ import org.acemq.infra.provider.ProbedCluster;
  * @param target what the cluster being moved to turned out to be
  * @param required the capabilities the file's {@code requires:} list asserted, and whether the
  *     clusters turned out to have them
+ * @param scope what a canary's scope resolved to on the source, and who is attached to it. Empty
+ *     for the operations that do not have one, which is why it is a block above the steps rather
+ *     than a line inside one: for a canary it is the operation, and a reader checks it before
+ *     reading anything else
  * @param steps the numbered steps
  * @param warnings the things that are true and are about to surprise somebody
  * @param refusals the reasons this cutover cannot run as written; empty means it can
  */
 public record Plan(String name, String headline, ProbedCluster source, ProbedCluster target,
-                   List<Requirement> required, List<PlannedStep> steps, List<String> warnings,
-                   List<String> refusals) {
+                   List<Requirement> required, List<String> scope, List<PlannedStep> steps,
+                   List<String> warnings, List<String> refusals) {
 
     /**
      * One entry of a {@code probe} step's {@code requires:} list, answered.
@@ -64,6 +68,7 @@ public record Plan(String name, String headline, ProbedCluster source, ProbedClu
 
     public Plan {
         required = List.copyOf(required);
+        scope = List.copyOf(scope);
         steps = List.copyOf(steps);
         warnings = List.copyOf(warnings);
         refusals = List.copyOf(refusals);
@@ -91,6 +96,14 @@ public record Plan(String name, String headline, ProbedCluster source, ProbedClu
         out.add("");
         renderProbe(out);
         out.add("");
+        if (!scope.isEmpty()) {
+            boolean first = true;
+            for (String line : scope) {
+                out.add(pad(first ? "  scope" : "") + line);
+                first = false;
+            }
+            out.add("");
+        }
         for (PlannedStep step : steps) {
             boolean first = true;
             for (String line : step.lines()) {

@@ -43,6 +43,7 @@ import org.acemq.infra.config.Step;
 import org.acemq.infra.config.TopologyPart;
 import org.acemq.infra.config.WaitFor;
 import org.acemq.infra.plan.DefaultSteps;
+import org.acemq.infra.plan.ScopeCheck;
 import org.acemq.infra.provider.Capability;
 import org.acemq.infra.provider.Inventory;
 
@@ -94,6 +95,22 @@ public final class Executor {
     private final List<Broker.Movement> outstanding = new ArrayList<>();
     private final List<Step> completed = new ArrayList<>();
 
+    /**
+     * The queues a canary's scope resolved to, and what every guard in one measures.
+     *
+     * <p>Empty for a whole-estate cutover, where empty means the whole virtual host and that is
+     * what the operation means. For a canary it is the difference between a guard that watches the
+     * workload being moved and one that watches the estate: a {@code consumers >= 1} on the target
+     * that counted the whole vhost would be satisfied by somebody else's application, and an
+     * {@code unacked = 0} on the source would wait for workloads this cutover is deliberately
+     * leaving alone.
+     *
+     * <p>Resolved against the source once, and used on both clusters. The target's copies of these
+     * queues are made by the topology step, so resolving patterns against the target would give an
+     * empty list before that step and a different list after it.
+     */
+    private final List<String> scopedQueues;
+
     /** The movement the step being run has just declared, so its guard can watch that one. */
     private Broker.Movement declared;
 
@@ -102,12 +119,27 @@ public final class Executor {
 
     private Executor(Run run) {
         this.run = run;
+        this.scopedQueues = scopeOf(run);
         for (Run.Side side : List.of(run.from(), run.to())) {
             // The wrap happens here, once, so that every verb every step reaches is already
             // incapable of writing when this is a rehearsal.
             brokers.put(side.name(), run.mode() == Run.Mode.REHEARSE
                     ? new Rehearsal(side.broker()) : side.broker());
         }
+    }
+
+    /** A canary's scope, resolved against the source. Nothing for the other two operations. */
+    private static List<String> scopeOf(Run run) {
+        Deployment deployment = run.file().deployment().orElse(null);
+        if (deployment == null
+                || deployment.operation().orElse(Operation.BLUE_GREEN) != Operation.CANARY) {
+            return List.of();
+        }
+        return deployment.scope()
+                .map(scope -> Selection.select(run.from().probed().inventory().queues(),
+                        scope.queues(), Inventory.Queue::name).stream()
+                        .map(Inventory.Queue::name).toList())
+                .orElse(List.of());
     }
 
     /**
@@ -218,6 +250,9 @@ public final class Executor {
             return refusals;
         }
 
+        refusals.addAll(scopeRefusals());
+        refusals.addAll(mirrorRefusals());
+
         for (Step step : run.steps()) {
             String where = "step " + step.describeId();
             step.find(Action.Requires.class).ifPresent(requires -> {
@@ -283,6 +318,90 @@ public final class Executor {
                 clusterRefusal(where, guard.on().orElse(run.from().name())).ifPresent(refusals::add);
                 guardRefusal(where, guard).ifPresent(refusals::add);
             });
+        }
+        return refusals;
+    }
+
+    /**
+     * The check that makes a canary safe, answered before the first write.
+     *
+     * <p>{@link ScopeCheck} carries the whole argument and it is not restated here. What this adds
+     * is the timing, which is the same argument the rest of the preflight makes: "something else is
+     * consuming orders.notifications" is worth having at second zero and worth nothing at step six
+     * with the producers stopped and the consumers closed. It is checked against what
+     * {@code probe()} found rather than against a fresh listing, for the reason
+     * {@link #queuesToDrain} gives — a run whose refusals moved underneath it would be a run nobody
+     * could review.
+     *
+     * <p>Also run in a rehearsal. A rehearsal that reported a canary as fine and then had the real
+     * run refuse it would be a rehearsal nobody could act on, and the check writes nothing.
+     */
+    private List<String> scopeRefusals() {
+        Deployment deployment = run.file().deployment().orElseThrow();
+        if (deployment.operation().orElse(Operation.BLUE_GREEN) != Operation.CANARY) {
+            return List.of();
+        }
+        Optional<Deployment.Scope> scope = deployment.scope();
+        if (scope.isEmpty()) {
+            return List.of("this is a canary and the file has no deployment.scope block. A canary"
+                    + " is a cutover at a smaller scope, and with no scope there is nothing smaller"
+                    + " about it: the close step would take every consuming connection on "
+                    + run.from().name() + " and the drain would take every queue.");
+        }
+        ScopeCheck.Result result = ScopeCheck.of(scope.get(), run.from().name(),
+                run.from().probed().inventory());
+        notes.addAll(result.lines());
+        notes.addAll(result.warnings());
+        // Said before the run rather than at the step that needs it. docs/canary.md: the endpoint
+        // row is the one that surprises people, because a canary needs the switch to move one
+        // service and leave everything else where it is -- and in an estate where every
+        // application reads the same URL from the same config map, that is the work the canary
+        // actually depends on. Discovering it at the endpoint step means discovering it with the
+        // producers stopped and the queues already drained.
+        notes.add("a canary needs PER-SERVICE routing: "
+                + String.join(", ", scope.get().services()) + " must resolve to " + run.to().name()
+                + " while everything else still resolves to " + run.from().name()
+                + ". The endpoint step is what asks for it, and nothing in this run can check that"
+                + " the switch was that narrow.");
+        return result.refusals();
+    }
+
+    /**
+     * What a mirror is not allowed to do, which is most of what a cutover does.
+     *
+     * <p>docs/canary.md gives the reason a mirror is its own verb rather than a mode of canary: it
+     * does not end in a cutover and it has no rollback. It is an observation, and it ends when
+     * somebody stops it. Two things follow and both are refusals rather than warnings, because
+     * either one turns the observation into the operation the page refuses.
+     *
+     * <ul>
+     *   <li>A <strong>drain</strong> consumes from the source. A mirror that drains has emptied the
+     *       cluster it was supposed to leave untouched, and there is no undo for a shovel.</li>
+     *   <li>An <strong>endpoint switch</strong> routes clients at a cluster whose consumers are
+     *       supposed to be in shadow mode, doing the work and discarding the result. Every message
+     *       is then processed by something that throws the answer away and by nothing else.</li>
+     * </ul>
+     */
+    private List<String> mirrorRefusals() {
+        Deployment deployment = run.file().deployment().orElseThrow();
+        if (deployment.operation().orElse(Operation.BLUE_GREEN) != Operation.MIRROR) {
+            return List.of();
+        }
+        List<String> refusals = new ArrayList<>();
+        for (Step step : run.steps()) {
+            String where = "step " + step.describeId();
+            if (step.has(Action.Drain.class)) {
+                refusals.add(where + " drains, and this is a mirror. A drain is a shovel and a"
+                        + " shovel consumes: it would empty " + run.from().name() + ", which a"
+                        + " mirror exists to leave authoritative and untouched. A mirror copies.");
+            }
+            if (step.has(Action.Switch.class)) {
+                refusals.add(where + " switches the endpoint, and this is a mirror. A mirror has no"
+                        + " cutover — " + run.to().name() + "'s consumers are meant to be in shadow"
+                        + " mode, doing the work and discarding the result, so routing clients"
+                        + " there means every message is processed by something that throws the"
+                        + " answer away.");
+            }
         }
         return refusals;
     }
@@ -466,7 +585,7 @@ public final class Executor {
                 // hazard with a depth guard is that the statistics database is behind. Depth zero
                 // and the shovel gone is a great deal more than either on its own.
                 List<String> measured = step.find(Action.Drain.class)
-                        .map(this::queuesToDrain).orElse(List.of());
+                        .map(this::queuesToDrain).orElse(scopedQueues);
                 Broker.Movement movement = declared;
                 verdict = guard(step.waitFor().get(), lines, measured,
                         () -> movement == null || brokers.get(movement.on()).finished(movement));
@@ -623,7 +742,7 @@ public final class Executor {
                     after.get().unacked(), OptionalInt.empty(), Optional.empty(),
                     after.get().timeout(), after.get().onTimeout(), after.get().location());
             lines.add("first, the after: condition — nothing is closed until it holds");
-            Verdict waited = guard(settle, lines, List.of(), () -> true);
+            Verdict waited = guard(settle, lines, scopedQueues, () -> true);
             if (waited != Verdict.CARRY_ON) {
                 return waited;
             }
@@ -697,6 +816,18 @@ public final class Executor {
                 + (mirror.exchanges().size() == 1 ? "" : "s") + " " + reading + " → " + writing
                 + " (" + String.join(", ", mirror.exchanges()) + ")");
         lines.add("messages are COPIED — " + reading + " keeps them");
+        lines.add("EXCHANGE federation. A federated queue would pull only when " + reading
+                + " had no local consumers, which is a conditional move rather than a copy");
+        // On every mirror step, in a rehearsal as much as in a run, and before the write rather
+        // than after it. docs/canary.md names this as the one thing the tool genuinely cannot
+        // verify and says it will print it rather than letting it be silent: a mirror whose
+        // consumers are not in shadow mode is canary-by-consumer, which the page refuses.
+        notes.add(writing + "'s consumers must be in shadow mode — doing the work and discarding"
+                + " the result — and NOTHING HERE CAN CHECK THAT. A federated exchange copies"
+                + " every message, so anything that writes to a shared database, calls a payment"
+                + " provider or sends an email does it twice. It also doubles the traffic and the"
+                + " storage on " + writing + ", which on a cluster sized for its normal load is"
+                + " the thing that falls over.");
 
         if (run.mode() == Run.Mode.REHEARSE) {
             return Verdict.CARRY_ON;

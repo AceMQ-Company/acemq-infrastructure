@@ -68,6 +68,41 @@ services.** If something else is attached to `orders.notifications` and you did
 not list it, the plan says so and refuses, because moving the queue without that
 consumer is exactly the partition this whole page is about.
 
+A name in `services:` is matched against **the user a connection authenticated
+as**. The broker has no concept of a service, and the user is the only identity
+it carries from the client through to the management API — it is also what the
+close step's `select.users` matches, so anything else here would mean the check
+and the step it protects disagreeing about who the service is.
+
+### The check runs both ways
+
+Stated on its own, "every consumer of a scoped queue is a named service" leaves
+the mirror image open, and the mirror image costs the same. Suppose
+`notification-service` consumes `orders.notifications`, which is in scope, and
+also `orders.new`, which is not. The rule above passes. The cutover then closes
+that service's connections and its endpoint resolves to green — so `orders.new`
+is left on blue with nothing consuming it, while the service sits on green
+watching a copy of `orders.new` that the topology import created and that
+nothing will ever publish to. The queue is not split; it is abandoned, which is
+worse, and it is silent in the same way.
+
+So what the tool actually enforces is that the scope is **closed**: the scoped
+queues and the named services form a group with no edge leaving it. Both
+directions refuse. That is what "a queue and everything attached to it" means
+when it is taken seriously.
+
+Two things about that are worth knowing before you write a file:
+
+- The check sees one virtual host, because the probe does. A service consuming
+  a queue in a *different* vhost is outside what any of this can see, and the
+  plan does not pretend otherwise.
+- **If the consumer listing cannot be read, the plan refuses.** A management
+  account without permission to read `/api/consumers` returns an empty list, and
+  an empty list is indistinguishable from a queue with nothing attached — one of
+  which says the canary is safe and the other of which says nobody knows. A
+  check that passed quietly when it could not see would be worse than no check,
+  because somebody would have read its output.
+
 Picking the first workload is a judgement the tool cannot make. The useful
 heuristic: it should be low-volume, idempotent, owned by a team that will notice
 within the hour, and not on the path to money.
@@ -126,7 +161,19 @@ the conditional move described above, and the format does not offer a way to
 write that by accident.
 
 That last comment is the one thing the tool genuinely cannot verify, and it will
-print it as a warning on every `mirror` plan rather than letting it be silent.
+print it as a warning on every `mirror` plan rather than letting it be silent —
+on every plan that declares a mirror at all, in fact, including a `blueGreen`
+file with a mirror step in it, because that file has built the same federated
+exchange and carries the same hazard.
+
+Two more things follow from a mirror having no cutover, and both are refusals
+rather than warnings:
+
+- **A `mirror` must not drain.** A drain is a shovel and a shovel consumes. A
+  mirror that drains has emptied the cluster it exists to leave authoritative.
+- **A `mirror` must not switch the endpoint.** Routing clients at green means
+  every message is processed by consumers that are supposed to be throwing their
+  results away, and by nothing else.
 
 ### 3. Canary by consumer — refused
 

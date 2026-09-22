@@ -26,6 +26,8 @@ import org.acemq.infra.execute.Fakes.RecordingBroker;
 import org.acemq.infra.execute.Fakes.Ticks;
 import org.acemq.infra.execute.Fakes.Voice;
 import org.acemq.infra.execute.Observation.Reading;
+import org.acemq.infra.provider.Inventory;
+import org.acemq.infra.provider.ProbedCluster;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -405,6 +407,208 @@ class ExecutorTest {
     }
 
     @Nested
+    @DisplayName("a canary")
+    class Canary {
+
+        /**
+         * The same machinery, the same guards, the same rollback — and a smaller selector.
+         *
+         * <p>docs/canary.md says that sharing all of it is a feature rather than an admission, so
+         * this asserts what a canary does differently and nothing else: it drains the one queue the
+         * scope named, closes only the named service's connections, and leaves everything on the
+         * source that the scope did not claim.
+         */
+        @Test
+        void movesTheScopedWorkloadAndLeavesTheRestOfTheEstate() {
+            Execution execution = Executor.execute(canaryRun().cutover());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.COMPLETED);
+            assertThat(green.wrote).contains("drain:orders.notifications");
+            assertThat(String.join(" ", green.wrote))
+                    .doesNotContain("orders.new").doesNotContain("orders.audit");
+            assertThat(blue.wrote).contains("detach:10.0.0.3:52002");
+            assertThat(blue.wrote).doesNotContain("detach:10.0.0.1:52000");
+        }
+
+        /**
+         * The guards narrow with the scope, which is the part that is easy to leave out.
+         *
+         * <p>A canary's {@code consumers >= 1} on the target counted over the whole virtual host is
+         * satisfied by somebody else's application, and an {@code unacked = 0} on the source waits
+         * for workloads this cutover is deliberately not touching. Both read as a guard doing its
+         * job and neither is.
+         */
+        @Test
+        void measuresTheScopedQueuesRatherThanTheWholeVirtualHost() {
+            Executor.execute(canaryRun().cutover());
+
+            assertThat(blue.read).contains("measure:orders.notifications");
+            assertThat(green.read).contains("measure:orders.notifications");
+            assertThat(blue.read).doesNotContain("measure:");
+        }
+
+        /** The documented refusal, at second zero, before anything has been written. */
+        @Test
+        void refusesWhenSomethingUnlistedIsConsumingAScopedQueue() {
+            Execution execution = Executor.execute(canaryRun(Deployments.scoped("blue",
+                    Inventory.counting()
+                            .queue("orders.notifications", "classic", 40, 2)
+                            .consumer("orders.notifications", "10.0.0.3:52002",
+                                    "notification-service")
+                            .consumer("orders.notifications", "10.0.0.9:52099", "legacy-mailer")
+                            .build())).cutover());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.REFUSED);
+            assertThat(blue.wrote).isEmpty();
+            assertThat(green.wrote).isEmpty();
+            assertThat(refusals(execution)).contains("'legacy-mailer' is consuming"
+                    + " orders.notifications on blue");
+        }
+
+        @Test
+        void refusesWhenTheConsumersCouldNotBeListed() {
+            Execution execution = Executor.execute(canaryRun(Deployments.scoped("blue",
+                    Inventory.counting()
+                            .queue("orders.notifications", "classic", 40, 2)
+                            .consumersUnreadable("the management user has no monitoring tag")
+                            .build())).cutover());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.REFUSED);
+            assertThat(refusals(execution))
+                    .contains("the one check that makes a canary safe cannot be made");
+        }
+
+        /** Refused in a rehearsal too, so that a dry run and the real run agree about it. */
+        @Test
+        void refusesTheSameThingInARehearsal() {
+            Execution execution = Executor.execute(canaryRun(Deployments.scoped("blue",
+                    Inventory.counting()
+                            .queue("orders.notifications", "classic", 40, 1)
+                            .consumer("orders.notifications", "10.0.0.9:52099", "legacy-mailer")
+                            .build())).rehearsal());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.REFUSED);
+        }
+
+        @Test
+        void saysUpFrontThatTheEndpointHasToMoveForOneServiceOnly() {
+            Execution execution = Executor.execute(canaryRun().cutover());
+
+            assertThat(execution.notes()).anyMatch(note ->
+                    note.contains("PER-SERVICE routing")
+                            && note.contains("notification-service must resolve to green")
+                            && note.contains("everything else still resolves to blue"));
+        }
+
+        private Run.Builder canaryRun() {
+            return canaryRun(Deployments.closedScope("blue"));
+        }
+
+        private Run.Builder canaryRun(ProbedCluster source) {
+            blue = new RecordingBroker("blue");
+            green = new RecordingBroker("green");
+            ticks = new Ticks();
+            blue.whileDraining.add(RecordingBroker.idle());
+            green.whileDraining.add(RecordingBroker.idle());
+            blue.attachments.add(new Broker.Attachment("10.0.0.1:52000", "orders-service", true));
+            blue.attachments.add(
+                    new Broker.Attachment("10.0.0.3:52002", "notification-service", true));
+            return Run.of(Deployments.canary())
+                    .from(new Run.Side("blue", source, blue, "amqp://blue:5672"))
+                    .to(Deployments.side("green", green))
+                    .timing(ticks)
+                    .console(new Voice(Console.Answer.PROCEED));
+        }
+    }
+
+    @Nested
+    @DisplayName("a mirror")
+    class Mirror {
+
+        @Test
+        void federatesTheExchangeAndMovesNothing() {
+            Execution execution = Executor.execute(mirrorRun().cutover());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.COMPLETED);
+            assertThat(green.wrote).contains("mirror:orders");
+            assertThat(String.join(" ", blue.wrote)).doesNotContain("drain");
+            assertThat(String.join(" ", green.wrote)).doesNotContain("drain");
+        }
+
+        /**
+         * The one thing the tool cannot verify, said on every mirror plan rather than silently.
+         */
+        @Test
+        void saysThatTheTargetsConsumersMustBeInShadowModeAndThatItCannotCheck() {
+            Execution execution = Executor.execute(mirrorRun().cutover());
+
+            assertThat(execution.notes()).anyMatch(note ->
+                    note.contains("green's consumers must be in shadow mode")
+                            && note.contains("NOTHING HERE CAN CHECK THAT")
+                            && note.contains("doubles the traffic"));
+        }
+
+        @Test
+        void saysItInARehearsalToo() {
+            Execution execution = Executor.execute(mirrorRun().rehearsal());
+
+            assertThat(execution.notes())
+                    .anyMatch(note -> note.contains("must be in shadow mode"));
+            assertThat(green.wrote).isEmpty();
+        }
+
+        @Test
+        void refusesAMirrorThatDrains() {
+            Execution execution = Executor.execute(mirrorRun(Deployments.MIRROR + """
+                      steps:
+                        - id: start-mirror
+                          mirror: { from: blue, to: green, exchanges: [orders] }
+                        - id: drain-messages
+                          drain: { from: blue, to: green, queues: ["orders.*"] }
+                          waitFor: { on: blue, depth: 0, timeout: 15m }
+                    """).cutover());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.REFUSED);
+            assertThat(refusals(execution))
+                    .contains("drains, and this is a mirror")
+                    .contains("a shovel consumes");
+            assertThat(green.wrote).isEmpty();
+        }
+
+        /** A mirror has no cutover, which is the reason docs/canary.md gives it its own verb. */
+        @Test
+        void refusesAMirrorThatSwitchesTheEndpoint() {
+            Execution execution = Executor.execute(mirrorRun(Deployments.MIRROR + """
+                      steps:
+                        - id: start-mirror
+                          mirror: { from: blue, to: green, exchanges: [orders] }
+                        - id: switch-endpoint
+                          endpoint: { target: green }
+                    """).cutover());
+
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.REFUSED);
+            assertThat(refusals(execution)).contains("A mirror has no cutover");
+        }
+
+        private Run.Builder mirrorRun() {
+            return mirrorRun(Deployments.MIRROR);
+        }
+
+        private Run.Builder mirrorRun(String yaml) {
+            blue = new RecordingBroker("blue");
+            green = new RecordingBroker("green");
+            ticks = new Ticks();
+            blue.readings.add(RecordingBroker.idle());
+            green.readings.add(RecordingBroker.idle());
+            return Run.of(Deployments.file(yaml))
+                    .from(Deployments.side("blue", blue))
+                    .to(Deployments.side("green", green))
+                    .timing(ticks)
+                    .console(new Voice(Console.Answer.PROCEED));
+        }
+    }
+
+    @Nested
     @DisplayName("the sealed Action type")
     class EveryAction {
 
@@ -421,6 +625,13 @@ class ExecutorTest {
                 assertThat(handled).contains(permitted.getSimpleName());
             }
         }
+    }
+
+    /** Everything a refused run gave as its reason, joined, for tests that assert on the wording. */
+    private static String refusals(Execution execution) {
+        return execution.steps().stream().filter(step -> step.id().equals("refused"))
+                .flatMap(step -> step.lines().stream())
+                .reduce("", (all, one) -> all + " " + one);
     }
 
     private static String line(Execution execution, String id) {

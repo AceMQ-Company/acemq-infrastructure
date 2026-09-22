@@ -93,8 +93,10 @@ public final class Planner {
 
     /** Facts gathered while rendering, turned into warnings afterwards so the order is fixed. */
     private final List<Inventory.Queue> streamsInScope = new ArrayList<>();
+    private final List<String> scopeLines = new ArrayList<>();
     private long messagesToMove;
     private boolean drains;
+    private boolean mirrors;
     private boolean stepsWereDefaulted;
     private int drainStep;
     private boolean policiesDeferredAndDropped;
@@ -141,6 +143,11 @@ public final class Planner {
         // "policies EXCLUDED -- applied at step 7" and it cannot know which step that is until
         // every step has a number. Getting this wrong is not cosmetic: the reader uses that
         // number to check that the rules really do land after the drain.
+        // Before the steps, because a canary whose scope is not closed is refused whatever its
+        // steps say, and because the scope is the one thing a reader of a canary plan wants above
+        // the step list rather than inside it.
+        checkScope();
+
         Map<Step, Integer> numbers = number(steps);
         for (Map.Entry<Step, Integer> entry : numbers.entrySet()) {
             render(entry.getKey(), entry.getValue(), numbers);
@@ -150,7 +157,84 @@ public final class Planner {
         gatherWarnings();
 
         return new Plan(file.metadata().name().orElse("(unnamed)"), headline(), source, target,
-                required, planned, warnings, refusals);
+                required, scopeLines, planned, warnings, refusals);
+    }
+
+    /**
+     * The canary's scope, resolved against the source, and the check that makes it safe.
+     *
+     * <p>{@link ScopeCheck} carries the argument. The only decision here is that a canary with no
+     * {@code scope:} block at all is refused rather than treated as an estate-wide cutover wearing
+     * the word canary: the scope is the operation, and an absent one is not a smaller one.
+     */
+    private void checkScope() {
+        if (operation != Operation.CANARY) {
+            return;
+        }
+        Optional<Deployment.Scope> scope = deployment.scope();
+        if (scope.isEmpty()) {
+            refusals.add("deployment.operation is canary and there is no deployment.scope block."
+                    + " A canary is a cutover at a smaller scope, and without the scope there is"
+                    + " nothing smaller about it — the step list would close every consuming"
+                    + " connection on " + from + " and drain every queue.");
+            return;
+        }
+        ScopeCheck.Result result = ScopeCheck.of(scope.get(), from, inventoryOf(from));
+        scopeLines.addAll(result.lines());
+        warnings.addAll(result.warnings());
+        refusals.addAll(result.refusals());
+    }
+
+    /**
+     * The sentence docs/canary.md ends on, said at the top rather than at step nine.
+     *
+     * <p>Worded against the endpoint block the file actually wrote, because the work is different
+     * in each case and "you will need per-service routing" is advice nobody can act on. A hook
+     * that is handed the target and nothing else cannot route one service differently from
+     * another, and an external switch moves whatever resolves through it — which, in the estate
+     * this warning is for, is everything.
+     */
+    private String perServiceRouting() {
+        List<String> services = deployment.scope().map(Deployment.Scope::services)
+                .orElse(List.of());
+        String who = services.isEmpty() ? "the scoped services" : String.join(", ", services);
+        StringBuilder line = new StringBuilder("a canary needs PER-SERVICE routing: ").append(who)
+                .append(" must resolve to ").append(to)
+                .append(" while everything else still resolves to ").append(from)
+                .append(". ");
+        Optional<Endpoint> endpoint = file.endpoint();
+        EndpointKind kind = endpoint.flatMap(Endpoint::kind).orElse(EndpointKind.EXTERNAL);
+        if (endpoint.isEmpty()) {
+            line.append("The file has no endpoint: block at all, so nothing in this plan moves the"
+                    + " clients and the canary ends with the queues on ").append(to)
+                    .append(" and the services still on ").append(from).append('.');
+        } else if (kind == EndpointKind.HOOK) {
+            boolean named = endpoint.get().args().stream()
+                    .anyMatch(argument -> services.contains(argument));
+            line.append(named
+                    ? "endpoint.run is given the service name as an argument, so this file has"
+                            + " said how. Whether the hook does it is outside what this tool can"
+                            + " check."
+                    : "endpoint.run is a hook and its args do not name any of them, so the hook is"
+                            + " being told which cluster and not which service. Pass the service"
+                            + " to it, or the switch is estate-wide.");
+        } else {
+            line.append("endpoint.kind is external, which moves whatever resolves through it. In"
+                    + " an estate where every application reads the same RABBITMQ_URL from the"
+                    + " same config map that is a whole-estate switch wearing a canary's name, and"
+                    + " it is the piece of work this canary actually depends on.");
+        }
+        return line.toString();
+    }
+
+    /** The warning docs/canary.md says must appear on every mirror plan rather than being silent. */
+    private String shadowMode() {
+        return to + "'s consumers must be in shadow mode — doing the work and discarding the"
+                + " result — and THE TOOL CANNOT CHECK THIS. A federated exchange copies every"
+                + " message, so anything that writes to a shared database, calls a payment"
+                + " provider or sends an email does it twice. A mirror whose consumers are not in"
+                + " shadow mode is canary-by-consumer, which docs/canary.md refuses. It also"
+                + " doubles the traffic and the storage on " + to + ".";
     }
 
     private String headline() {
@@ -427,6 +511,11 @@ public final class Planner {
         }
         lines.add(line.toString());
         lines.add("messages are COPIED — " + reading + " keeps them");
+        // Said on the step as well as in the warnings, because the step is where a reader is
+        // looking when they ask what this one does, and the warning is at the bottom.
+        lines.add("EXCHANGE federation, never queue federation — a federated queue pulls only when"
+                + " the upstream has no local consumers, which is a conditional move");
+        this.mirrors = true;
         needs.add(new PlannedStep.Need(Capability.MIRROR_BY_FEDERATION, writing));
     }
 
@@ -556,26 +645,22 @@ public final class Planner {
      * it is the order of how little can be done about them.
      */
     private void gatherWarnings() {
+        // The endpoint first, and for a canary it is first deliberately. docs/canary.md ends on
+        // the row that surprises people: a canary needs per-service routing, so that one service
+        // resolves to the target while everything else still resolves to the source. In an estate
+        // where every application reads the same RABBITMQ_URL from the same config map that is the
+        // piece of work the canary actually depends on, and the page is explicit that the tool
+        // should say so in the plan rather than discover it at step nine.
+        if (operation == Operation.CANARY) {
+            warnings.add(perServiceRouting());
+        }
+
         if (!streamsInScope.isEmpty()) {
-            String names = String.join(", ", streamsInScope.stream()
-                    .map(Inventory.Queue::name).toList());
-            String acknowledged = file.streams().flatMap(streams -> streams.acknowledged())
-                    .orElse(false)
-                    ? "streams.acknowledged is set, so the plan proceeds"
-                    : "streams.acknowledged is NOT set";
-            warnings.add(Text.count(streamsInScope.size(), "stream") + " in scope (" + names
-                    + "). Offsets do not travel between clusters and no API at any version can"
-                    + " write one into another cluster's log, so every consumer restarts at"
-                    + " whatever its x-stream-offset says. " + acknowledged + ".");
-            if (!file.streams().flatMap(streams -> streams.acknowledged()).orElse(false)) {
-                // docs/message-state.md: the tool refuses to plan a stream step silently. This is
-                // the refusal, and the reason it is a refusal rather than a warning is that the
-                // consequence -- a week of reprocessing, or a silent gap -- is not visible in the
-                // estate afterwards.
-                refusals.add("a stream is in the drain's scope and streams.acknowledged is not"
-                        + " set. Stream offsets cannot be moved between clusters; the file has to"
-                        + " say, in writing, that the consumers' restart position is accepted.");
-            }
+            StreamRestart.Projection projection = StreamRestart.of(streamsInScope,
+                    inventoryOf(from).consumers(), file.streams(), from);
+            warnings.addAll(projection.lines());
+            warnings.addAll(projection.warnings());
+            refusals.addAll(projection.refusals());
         }
 
         if (drains && messagesToMove > 0) {
@@ -586,22 +671,19 @@ public final class Planner {
 
         file.rollback().ifPresent(this::rollbackWarning);
 
-        if (operation == Operation.MIRROR) {
-            warnings.add("green's consumers must be in shadow mode. A federated exchange copies"
-                    + " every message, so anything that writes to a shared database or calls a"
-                    + " payment provider will do it twice, and the tool cannot check this.");
+        if (mirrors) {
+            // On every mirror plan, and not only on a mirror operation: a blue/green file with a
+            // mirror step in it has built the same federated exchange and carries the same
+            // hazard. docs/canary.md calls this the one thing the tool genuinely cannot verify and
+            // says it will print it rather than letting it be silent, so the condition is "a
+            // mirror is being declared" rather than "the operation is called mirror".
+            warnings.add(shadowMode());
         }
 
         if (deployment.semantics().map(semantics -> semantics == Semantics.AT_MOST_ONCE)
                 .orElse(false)) {
             warnings.add("semantics=atMostOnce: a message may be stranded on " + from + " and"
                     + " never processed. Nothing in this plan will tell you which ones.");
-        }
-
-        if (operation == Operation.CANARY) {
-            warnings.add("a canary is safe only when every consumer of the scoped queues belongs"
-                    + " to one of the named services. Checking that against live consumers is"
-                    + " phase 3; this plan does not do it for you.");
         }
 
         if (policiesDeferredAndDropped) {

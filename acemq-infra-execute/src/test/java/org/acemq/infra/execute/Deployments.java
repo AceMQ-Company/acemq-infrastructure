@@ -155,6 +155,98 @@ final class Deployments {
                     onTimeout: abort
             """;
 
+    /**
+     * A canary of one workload out of the same estate, with no {@code steps:} of its own.
+     *
+     * <p>Deliberately without them: a canary's default list is where {@code scope.queues} becomes
+     * the drain's patterns and {@code scope.services} becomes the close step's selector, and a file
+     * that wrote its own steps would be testing the file rather than that translation.
+     */
+    static final String CANARY = """
+            apiVersion: acemq.org/v1alpha1
+            kind: Deployment
+            metadata:
+              name: notifications-canary
+
+            clusters:
+              blue:
+                management: https://blue.internal:15671
+                amqp: amqps://blue.internal:5671
+                vhost: /orders
+                username: admin
+                password: secret
+              green:
+                management: https://green.internal:15671
+                amqp: amqps://green.internal:5671
+                vhost: /orders
+                username: admin
+                password: secret
+
+            provider: rabbitmq
+
+            endpoint:
+              # External rather than the hook examples/canary.yaml writes, because a hook here
+              # would be a test of whether a shell script exists. What a canary needs of the
+              # endpoint -- that it move one service and leave everything else alone -- is not
+              # something either kind can be checked for, which is why the run says so in a note.
+              kind: external
+              description: notification-service resolves through a per-service mesh route.
+
+            deployment:
+              operation: canary
+              from: blue
+              to: green
+              semantics: atLeastOnce
+
+              backup:
+                enabled: false
+
+              scope:
+                vhost: /orders
+                queues: [orders.notifications]
+                services: [notification-service]
+            """;
+
+    /** A mirror of one exchange, which moves nothing and ends when somebody stops it. */
+    static final String MIRROR = """
+            apiVersion: acemq.org/v1alpha1
+            kind: Deployment
+            metadata:
+              name: orders-shadow-mirror
+
+            clusters:
+              blue:
+                management: https://blue.internal:15671
+                amqp: amqps://blue.internal:5671
+                vhost: /orders
+                username: admin
+                password: secret
+              green:
+                management: https://green.internal:15671
+                amqp: amqps://green.internal:5671
+                vhost: /orders
+                username: admin
+                password: secret
+
+            provider: rabbitmq
+
+            endpoint:
+              kind: external
+              description: No endpoint change. Blue remains authoritative throughout.
+
+            deployment:
+              operation: mirror
+              from: blue
+              to: green
+
+              mirror:
+                exchanges: ["orders"]
+                upstream:
+                  uri: amqps://blue.internal:5671
+                  prefetch: 1000
+                  ackMode: onConfirm
+            """;
+
     private Deployments() {
     }
 
@@ -171,6 +263,56 @@ final class Deployments {
     /** The blue/green worked example. */
     static DeploymentFile blueGreen() {
         return file(BLUE_GREEN);
+    }
+
+    /** The canary, which moves {@code orders.notifications} and leaves the rest of the estate. */
+    static DeploymentFile canary() {
+        return file(CANARY);
+    }
+
+    /** The mirror, which moves nothing. */
+    static DeploymentFile mirror() {
+        return file(MIRROR);
+    }
+
+    /**
+     * The same four queues, with a consumer listing that says who is on which.
+     *
+     * <p>{@code notification-service} is on the queue the canary moves and on nothing else, and
+     * {@code orders-service} is on the two that stay. That is the estate a canary is allowed to
+     * run against — the scope is closed — and it is the baseline the refusal fixtures depart from
+     * one edge at a time.
+     *
+     * @param name the deployment file's name for the cluster
+     * @return the probe result
+     */
+    static ProbedCluster closedScope(String name) {
+        return scoped(name, Inventory.counting()
+                .queue("orders.new", "classic", 27412, 8)
+                .queue("orders.notifications", "classic", 40, 2)
+                .queue("orders.audit", "classic", 190, 1)
+                .queue("orders.priority", "quorum", 4, 1)
+                .connection("10.0.0.1:52000", "orders-service", 4)
+                .connection("10.0.0.3:52002", "notification-service", 2)
+                .consumer("orders.notifications", "10.0.0.3:52002", "notification-service")
+                .consumer("orders.new", "10.0.0.1:52000", "orders-service")
+                .consumer("orders.audit", "10.0.0.1:52000", "orders-service")
+                .build());
+    }
+
+    /**
+     * A cluster that can do everything, holding whatever the test needs it to hold.
+     *
+     * @param name the deployment file's name for it
+     * @param inventory what is on it
+     * @return the probe result
+     */
+    static ProbedCluster scoped(String name, Inventory inventory) {
+        return ProbedCluster.named(name)
+                .version("4.0.5")
+                .can(Capability.values())
+                .inventory(inventory)
+                .build();
     }
 
     /**

@@ -328,7 +328,10 @@ class PlannerTest {
                     """);
             assertThat(step(plan, "mirror")).containsExactly(
                     "federate 1 exchange blue → green (orders)",
-                    "messages are COPIED — blue keeps them");
+                    "messages are COPIED — blue keeps them",
+                    "EXCHANGE federation, never queue federation — a federated queue pulls only"
+                            + " when the upstream has no local consumers, which is a conditional"
+                            + " move");
         }
     }
 
@@ -419,8 +422,38 @@ class PlannerTest {
             Plan plan = plan(CUTOVER);
             assertThat(plan.warnings().get(0))
                     .contains("2 streams in scope (orders.events, orders.events.raw)")
-                    .contains("Offsets do not travel between clusters")
-                    .contains("streams.acknowledged is NOT set");
+                    .contains("Offsets do not travel between clusters");
+            assertThat(plan.refusals())
+                    .anyMatch(refusal -> refusal.contains("streams.acknowledged is not set"));
+        }
+
+        /**
+         * The half of stream handling docs/roadmap.md asks for by name.
+         *
+         * <p>Three consumers on one stream, configured three different ways, and the plan says
+         * three different things about them. A single warning about offsets not travelling is true
+         * of all three and answers the question about none of them: the operator is signing off on
+         * a week of reprocessing for one and a silent gap for the next.
+         */
+        @Test
+        @DisplayName("project what each stream consumer will do, one at a time")
+        void perConsumerProjection() {
+            Plan plan = plan("streams:\n  acknowledged: true\n" + CUTOVER);
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("orders.events · audit-writer")
+                            && warning.contains("`first`")
+                            && warning.contains("replays the target's entire retained log"));
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("orders.events · ledger-tailer")
+                            && warning.contains("`next`")
+                            && warning.contains("is never delivered"));
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("orders.events · search-indexer")
+                            && warning.contains("no x-stream-offset, which RabbitMQ reads as"
+                                    + " `next`"));
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("orders.events.raw · audit-writer")
+                            && warning.contains("a timestamp or an interval"));
         }
 
         @Test
@@ -429,8 +462,69 @@ class PlannerTest {
             assertThat(plan(CUTOVER).ok()).isFalse();
             Plan acknowledged = plan("streams:\n  acknowledged: true\n" + CUTOVER);
             assertThat(acknowledged.ok()).isTrue();
-            assertThat(acknowledged.warnings().get(0))
-                    .contains("streams.acknowledged is set, so the plan proceeds");
+            assertThat(acknowledged.warnings())
+                    .anyMatch(warning -> warning.contains("streams.acknowledged is set, so the"
+                            + " plan proceeds"));
+        }
+
+        /**
+         * A confirmation about the wrong consequence is not a confirmation.
+         *
+         * <p>{@code restartAt} sets nothing — nothing in this tool can move an offset — so its only
+         * job is to be checked against the consumers. A file that says the consumers will skip the
+         * window, over an estate whose consumers replay the whole log, has signed off on the
+         * opposite of what will happen.
+         */
+        @Test
+        @DisplayName("refuse when streams.restartAt and the live consumers disagree")
+        void restartAtMustMatchTheConsumers() {
+            Plan plan = plan("streams:\n  acknowledged: true\n  restartAt: next\n" + CUTOVER);
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("streams.restartAt says next")
+                            && refusal.contains("audit-writer on orders.events asks for first"));
+        }
+
+        @Test
+        @DisplayName("accept streams.restartAt when every consumer is asking for it")
+        void restartAtThatMatches() {
+            ProbedCluster agreed = Probes.blue()
+                    .inventory(Inventory.counting()
+                            .queue("orders.new", "classic", 12, 1)
+                            .queue("orders.events", "stream", 0, 2)
+                            .streamConsumer("orders.events", "10.0.0.9:51000", "audit-writer",
+                                    "next")
+                            // Nothing written at all, which RabbitMQ reads as `next` -- so this
+                            // consumer agrees with the file without saying so, and a comparison
+                            // that only looked at the text would refuse a correct file.
+                            .consumer("orders.events", "10.0.0.9:51001", "ledger-tailer")
+                            .build())
+                    .build();
+            Plan plan = plan("streams:\n  acknowledged: true\n  restartAt: next\n" + CUTOVER,
+                    agreed, Probes.green().build());
+            assertThat(plan.refusals()).isEmpty();
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("every consumer asks for next"));
+        }
+
+        /**
+         * The estate where the projection cannot be made, which is not the estate where it is fine.
+         */
+        @Test
+        @DisplayName("refuse a stream when the consumers could not be listed at all")
+        void streamsWithNoConsumerListing() {
+            ProbedCluster blind = Probes.blue()
+                    .inventory(Inventory.counting()
+                            .queue("orders.events", "stream", 0, 2)
+                            .consumersUnreadable("these credentials cannot read /api/consumers")
+                            .build())
+                    .build();
+            Plan plan = plan("streams:\n  acknowledged: true\n" + CUTOVER, blind,
+                    Probes.green().build());
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("could not be listed")
+                            && refusal.contains("streams.acknowledged confirms a consequence"));
         }
 
         @Test
@@ -498,25 +592,184 @@ class PlannerTest {
                     .anyMatch(warning -> warning.contains("shadow mode"));
         }
 
+        /**
+         * The row docs/canary.md ends on, and it is the first warning rather than the last.
+         *
+         * <p>A canary depends on one service resolving to the target while everything else still
+         * resolves to the source. The page says the tool should put that in the plan rather than
+         * let somebody discover it at step nine, and "first" is how a warning list says "before
+         * you read the rest of this".
+         */
         @Test
-        @DisplayName("say that a canary's scope safety check is not this phase's")
-        void canaryScope() {
+        @DisplayName("put per-service routing at the top of a canary's warnings")
+        void canaryNeedsPerServiceRouting() {
+            Plan plan = plan(Scope.CANARY, Scope.canaryBlue(), Probes.green().build());
+            assertThat(plan.warnings().get(0))
+                    .contains("PER-SERVICE routing")
+                    .contains("notification-service must resolve to green")
+                    .contains("everything else still resolves to blue")
+                    .contains("endpoint.kind is external");
+        }
+    }
+
+    @Nested
+    @DisplayName("a canary's scope")
+    class Scope {
+
+        @Test
+        @DisplayName("resolve to the queues it names and say who is attached")
+        void resolvesAndCounts() {
+            Plan plan = plan(CANARY, canaryBlue(), Probes.green().build());
+            assertThat(plan.ok()).isTrue();
+            assertThat(plan.scope()).containsExactly(
+                    "2 queues in scope on blue: orders.notifications, orders.notifications.dlq",
+                    "2 consumers attached to them, scope.services names notification-service");
+            assertThat(plan.render()).contains("  scope             2 queues in scope on blue");
+        }
+
+        /**
+         * The documented refusal, and the reason the operation is safe at all.
+         */
+        @Test
+        @DisplayName("refuse when something the file did not name is consuming a scoped queue")
+        void refusesAnUnlistedConsumer() {
+            ProbedCluster blue = canary(Inventory.counting()
+                    .queue("orders.notifications", "classic", 40, 2)
+                    .consumer("orders.notifications", "10.0.0.5:51000", "notification-service")
+                    // The one nobody remembered. Moving the queue without it partitions it.
+                    .consumer("orders.notifications", "10.0.0.9:51044", "legacy-mailer")
+                    .build());
+            Plan plan = plan(CANARY, blue, Probes.green().build());
+
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("'legacy-mailer' is consuming orders.notifications on blue")
+                            && refusal.contains("10.0.0.9:51044")
+                            && refusal.contains("partitions it"));
+        }
+
+        /**
+         * The half docs/canary.md does not state, which fails more quietly than the half it does.
+         */
+        @Test
+        @DisplayName("refuse when a named service also consumes a queue the scope left out")
+        void refusesAServiceThatReachesOutsideTheScope() {
+            ProbedCluster blue = canary(Inventory.counting()
+                    .queue("orders.notifications", "classic", 40, 1)
+                    .queue("orders.new", "classic", 900, 1)
+                    .consumer("orders.notifications", "10.0.0.5:51000", "notification-service")
+                    .consumer("orders.new", "10.0.0.5:51000", "notification-service")
+                    .build());
+            Plan plan = plan(CANARY, blue, Probes.green().build());
+
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("'notification-service' is named in deployment.scope.services")
+                            && refusal.contains("orders.new")
+                            && refusal.contains("nothing consuming them"));
+        }
+
+        /**
+         * The estate where the check cannot be made, which is not the estate where it passes.
+         */
+        @Test
+        @DisplayName("refuse when the consumers could not be listed at all")
+        void refusesWhenItCannotTell() {
+            ProbedCluster blue = canary(Inventory.counting()
+                    .queue("orders.notifications", "classic", 40, 3)
+                    .consumersUnreadable("these credentials cannot read /api/consumers on blue")
+                    .build());
+            Plan plan = plan(CANARY, blue, Probes.green().build());
+
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("the consumers of blue could not be listed")
+                            && refusal.contains("the one check that makes a canary safe"));
+            assertThat(plan.scope()).anyMatch(line -> line.contains("UNREADABLE"));
+        }
+
+        @Test
+        @DisplayName("warn when a named service is consuming nothing the scope selected")
+        void warnsAboutAServiceNobodyCanFind() {
+            ProbedCluster blue = canary(Inventory.counting()
+                    .queue("orders.notifications", "classic", 40, 0)
+                    .build());
+            Plan plan = plan(CANARY, blue, Probes.green().build());
+
+            assertThat(plan.ok()).isTrue();
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("names notification-service and nothing by that name is"
+                            + " consuming any queue in scope"));
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("nothing is consuming orders.notifications"));
+        }
+
+        @Test
+        @DisplayName("warn when the scope names a queue the cluster has not got")
+        void warnsAboutAQueueThatIsNotThere() {
+            ProbedCluster blue = canary(Inventory.counting()
+                    .queue("orders.notifications", "classic", 40, 1)
+                    .consumer("orders.notifications", "10.0.0.5:51000", "notification-service")
+                    .build());
+            Plan plan = plan(CANARY, blue, Probes.green().build());
+
+            assertThat(plan.warnings()).anyMatch(warning ->
+                    warning.contains("names orders.notifications.dlq")
+                            && warning.contains("blue has no queue by that name"));
+        }
+
+        @Test
+        @DisplayName("refuse a canary with no scope block at all")
+        void refusesACanaryWithNoScope() {
             Plan plan = plan("""
                     deployment:
                       operation: canary
                       from: blue
                       to: green
                       semantics: atLeastOnce
-                      scope:
-                        vhost: /orders
-                        queues: [orders.notifications]
-                        services: [notification-service]
                       steps:
                         - id: verify
                           waitFor: { on: green, consumers: { min: 1 }, timeout: 5m }
                     """);
-            assertThat(plan.warnings()).anyMatch(warning ->
-                    warning.contains("every consumer of the scoped queues"));
+            assertThat(plan.ok()).isFalse();
+            assertThat(plan.refusals()).anyMatch(refusal ->
+                    refusal.contains("there is no deployment.scope block")
+                            && refusal.contains("nothing smaller about it"));
+        }
+
+        @Test
+        @DisplayName("stay out of a blue/green plan, which has no scope to print")
+        void aWholeEstateCutoverHasNoScopeBlock() {
+            assertThat(plan("streams:\n  acknowledged: true\n" + CUTOVER).scope()).isEmpty();
+        }
+
+        private static final String CANARY = """
+                deployment:
+                  operation: canary
+                  from: blue
+                  to: green
+                  semantics: atLeastOnce
+                  scope:
+                    vhost: /orders
+                    queues: [orders.notifications, orders.notifications.dlq]
+                    services: [notification-service]
+                  steps:
+                    - id: verify
+                      waitFor: { on: green, consumers: { min: 1 }, timeout: 5m }
+                """;
+
+        private static ProbedCluster canaryBlue() {
+            return canary(Inventory.counting()
+                    .queue("orders.notifications", "classic", 40, 1)
+                    .queue("orders.notifications.dlq", "classic", 2, 1)
+                    .consumer("orders.notifications", "10.0.0.5:51000", "notification-service")
+                    .consumer("orders.notifications.dlq", "10.0.0.5:51001",
+                            "notification-service")
+                    .build());
+        }
+
+        private static ProbedCluster canary(Inventory inventory) {
+            return Probes.blue().inventory(inventory).build();
         }
     }
 

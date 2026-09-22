@@ -33,6 +33,7 @@ import org.acemq.infra.config.Operation;
 import org.acemq.infra.config.Rollback;
 import org.acemq.infra.config.Semantics;
 import org.acemq.infra.config.Step;
+import org.acemq.infra.config.Streams;
 import org.acemq.infra.config.TopologyPart;
 import org.acemq.infra.config.UnknownKey;
 import org.acemq.infra.config.WaitFor;
@@ -104,6 +105,7 @@ public final class Validator {
         endpoint();
         deployment();
         rollback();
+        streams();
     }
 
     // ------------------------------------------------------------------ header
@@ -257,6 +259,8 @@ public final class Validator {
             }
         }
 
+        scope.ifPresent(one -> closeSelectors(deployment, one));
+
         // The rule this whole operation exists to enforce. A percentage is not a small cutover for
         // a broker: it is a partitioned queue. Each cluster holds a fraction of the messages, a
         // consumer on one cannot see the other's, per-key ordering is gone, the dead-letter queues
@@ -274,6 +278,49 @@ public final class Validator {
         }
     }
 
+    /**
+     * A canary that closes every consuming connection on the source is not a canary.
+     *
+     * <p>Checkable with no broker in sight, which is why it is here and not only in the live scope
+     * check: the close step's selector is written in the same file as the scope, and an empty
+     * {@code select.users} means every consuming connection in the virtual host. For a whole-estate
+     * cutover that is exactly right and it is what {@code blueGreen} means; for a canary it closes
+     * the workloads that are staying, which is the estate-wide outage the operation was chosen to
+     * avoid.
+     */
+    private void closeSelectors(Deployment deployment, Deployment.Scope scope) {
+        List<Step> steps = deployment.stepsOrEmpty();
+        for (int index = 0; index < steps.size(); index++) {
+            Step step = steps.get(index);
+            Optional<Action.CloseConnections> close = step.find(Action.CloseConnections.class);
+            if (close.isEmpty()) {
+                continue;
+            }
+            String where = where("deployment.steps", index, step);
+            List<String> users = close.get().select()
+                    .map(Action.CloseConnections.Selector::users).orElse(List.of());
+            if (users.isEmpty()) {
+                error(where, "closes connections with no select.users, which is every consuming "
+                        + "connection on the cluster. In a canary that closes the workloads that "
+                        + "are staying. Name the scope's services: "
+                        + String.join(", ", scope.services()), close.get().location());
+                continue;
+            }
+            List<String> strangers = users.stream()
+                    .filter(user -> !scope.services().contains(user)).toList();
+            if (!strangers.isEmpty() && !scope.services().isEmpty()) {
+                // The file disagreeing with itself. Which half is right is not something to guess
+                // at: closing a connection the scope never claimed moves a workload nobody planned
+                // to move, and leaving it out moves a queue without its consumer.
+                error(where, "closes connections for " + String.join(", ", strangers)
+                        + ", which deployment.scope.services does not name. A canary moves one "
+                        + "workload completely: the services it closes and the services its scope "
+                        + "claims have to be the same list (docs/canary.md)",
+                        close.get().location());
+            }
+        }
+    }
+
     private void mirror(Deployment deployment, Optional<Operation> operation) {
         if (operation.filter(Operation.MIRROR::equals).isEmpty()) {
             return;
@@ -281,10 +328,33 @@ public final class Validator {
         Optional<MirrorSpec> spec = deployment.mirror();
         if (spec.isEmpty()) {
             error("deployment.mirror", "is required for a mirror operation", deployment.location());
-            return;
+        } else {
+            mirrorTarget("deployment.mirror", spec.get().exchanges(), spec.get().queues(),
+                    spec.get().location());
         }
-        mirrorTarget("deployment.mirror", spec.get().exchanges(), spec.get().queues(),
-                spec.get().location());
+
+        // A mirror has no cutover, which docs/canary.md gives as the reason it is its own verb
+        // rather than a mode of canary. An endpoint switch inside one routes production traffic at
+        // a cluster that is receiving a copy and whose consumers are supposed to be discarding
+        // their results -- so the messages are processed by shadow consumers and by nobody else.
+        List<Step> steps = deployment.stepsOrEmpty();
+        for (int index = 0; index < steps.size(); index++) {
+            Step step = steps.get(index);
+            String where = where("deployment.steps", index, step);
+            step.find(Action.Switch.class).ifPresent(switched ->
+                    error(where,
+                            "a mirror switches no endpoint. It is an observation: the source stays "
+                                    + "authoritative and the target receives a copy its consumers "
+                                    + "are meant to discard. Routing clients at the target makes "
+                                    + "every message the shadow's to process and nobody else's "
+                                    + "(docs/canary.md)", switched.location()));
+        }
+
+        if (document.rollback().isPresent()) {
+            warning("rollback", "a mirror has no rollback — nothing moved, so there is nothing to "
+                    + "undo. Stopping it means removing the federation upstream and the policy "
+                    + "that points at it", document.rollback().get().location());
+        }
     }
 
     /**
@@ -379,6 +449,38 @@ public final class Validator {
         if (rollback.steps().isPresent()) {
             checkSteps(rollback.steps().get(), "rollback.steps",
                     document.deployment().flatMap(Deployment::operation));
+        }
+    }
+
+    // ----------------------------------------------------------------- streams
+
+    /**
+     * The {@code streams:} block, which is a confirmation and not a setting.
+     *
+     * <p>Whether a stream is actually in scope is a question about the estate and belongs to the
+     * plan — this validator never sees a broker. What it can check is that the block says something
+     * coherent, and there is one incoherent thing a file can say: a {@code restartAt} with no
+     * {@code acknowledged}. That reads like a setting being applied, and nothing here applies it.
+     * An offset is a position in a log and the position a consumer resumes from is the
+     * {@code x-stream-offset} its own client asked for; the field is a statement of belief that the
+     * plan holds up against the live consumers, and a belief nobody has signed is not a gate.
+     */
+    private void streams() {
+        Optional<Streams> block = document.streams();
+        if (block.isEmpty()) {
+            return;
+        }
+        Streams streams = block.get();
+        if (streams.acknowledged().isEmpty() && streams.restartAt().isPresent()) {
+            error("streams", "restartAt is set and acknowledged is not. restartAt does not move an "
+                    + "offset — nothing can — it says what you believe the consumers are configured "
+                    + "to do, and the plan checks it against them. The confirmation is "
+                    + "acknowledged (docs/message-state.md)", streams.location());
+        }
+        if (streams.acknowledged().filter(one -> !one).isPresent()) {
+            warning("streams", "acknowledged is false, which is the same as not writing the block: "
+                    + "a plan with a stream in the drain's scope will be refused until it is true",
+                    streams.location());
         }
     }
 

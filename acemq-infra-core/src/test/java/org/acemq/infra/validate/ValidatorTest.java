@@ -451,6 +451,117 @@ class ValidatorTest {
 
             assertThat(errors(report)).noneMatch(message -> message.contains("partitions the queue"));
         }
+
+        /**
+         * The estate-wide close hiding inside a canary, and it is visible with no broker at all.
+         *
+         * <p>An empty {@code select.users} means every consuming connection in the virtual host.
+         * That is what a whole-estate cutover means and it is right there; in a canary it takes
+         * down the workloads that are staying, which is the outage the operation was chosen to
+         * avoid.
+         */
+        @Test
+        void refusesACanaryThatClosesEveryConsumingConnection() {
+            ValidationReport report = validate(around("""
+                    deployment:
+                      operation: canary
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                      scope:
+                        queues: ["orders.notifications"]
+                        services: [notification-service]
+                      steps:
+                        - id: drain-consumers
+                          closeConnections:
+                            on: blue
+                            select: { role: consumer }
+                            after: { unacked: 0, timeout: 3m }
+                    """));
+
+            assertThat(errors(report)).anyMatch(message ->
+                    message.contains("no select.users, which is every consuming connection")
+                            && message.contains("notification-service"));
+        }
+
+        /** A file disagreeing with itself about which workload is moving. */
+        @Test
+        void refusesACanaryThatClosesAServiceItsScopeDoesNotName() {
+            ValidationReport report = validate(around("""
+                    deployment:
+                      operation: canary
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                      scope:
+                        queues: ["orders.notifications"]
+                        services: [notification-service]
+                      steps:
+                        - id: drain-consumers
+                          closeConnections:
+                            on: blue
+                            select: { users: [notification-service, orders-service] }
+                            after: { unacked: 0, timeout: 3m }
+                    """));
+
+            assertThat(errors(report)).anyMatch(message ->
+                    message.contains("closes connections for orders-service")
+                            && message.contains("have to be the same list"));
+        }
+    }
+
+    @Nested
+    class StreamBlock {
+
+        /**
+         * {@code restartAt} on its own reads as a setting, and nothing here sets an offset.
+         */
+        @Test
+        void refusesARestartPositionNobodyHasAcknowledged() {
+            ValidationReport report = validate("streams:\n  restartAt: next\n" + around("""
+                    deployment:
+                      operation: blueGreen
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                    """));
+
+            assertThat(errors(report)).anyMatch(message ->
+                    message.contains("restartAt does not move an offset")
+                            && message.contains("The confirmation is acknowledged"));
+        }
+
+        @Test
+        void warnsThatAcknowledgedFalseIsTheSameAsSayingNothing() {
+            ValidationReport report = validate("streams:\n  acknowledged: false\n" + around("""
+                    deployment:
+                      operation: blueGreen
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                    """));
+
+            assertThat(warnings(report)).anyMatch(message ->
+                    message.contains("acknowledged is false"));
+        }
+
+        @Test
+        void acceptsTheBlockTheDocumentationWritesOut() {
+            ValidationReport report = validate("""
+                    streams:
+                      acknowledged: true
+                      restartAt: next
+                      note: "audit.events consumers accept the gap; replay from the warehouse"
+                    """ + around("""
+                    deployment:
+                      operation: blueGreen
+                      from: blue
+                      to: green
+                      semantics: atLeastOnce
+                    """));
+
+            assertThat(errors(report)).isEmpty();
+        }
     }
 
     @Nested
@@ -525,6 +636,53 @@ class ValidatorTest {
 
             assertThat(errors(report)).contains("a mirror must not drain — a drain consumes from "
                     + "the source and a mirror is an observation");
+        }
+
+        /**
+         * A mirror does not end in a cutover, which is docs/canary.md's reason for giving it its
+         * own verb rather than making it a mode of canary.
+         */
+        @Test
+        void refusesAnEndpointSwitchInsideAMirror() {
+            ValidationReport report = validate(around("""
+                    deployment:
+                      operation: mirror
+                      from: blue
+                      to: green
+                      mirror:
+                        exchanges: ["orders"]
+                      steps:
+                        - id: start-mirror
+                          mirror:
+                            from: blue
+                            to: green
+                            exchanges: ["orders"]
+                        - id: switch-endpoint
+                          endpoint:
+                            target: green
+                    """));
+
+            assertThat(errors(report)).anyMatch(message ->
+                    message.contains("a mirror switches no endpoint")
+                            && message.contains("meant to discard"));
+        }
+
+        @Test
+        void warnsThatAMirrorHasNothingToRollBack() {
+            ValidationReport report = validate(around("""
+                    deployment:
+                      operation: mirror
+                      from: blue
+                      to: green
+                      mirror:
+                        exchanges: ["orders"]
+
+                    rollback:
+                      keep: blue
+                    """));
+
+            assertThat(warnings(report))
+                    .anyMatch(message -> message.contains("a mirror has no rollback"));
         }
     }
 
