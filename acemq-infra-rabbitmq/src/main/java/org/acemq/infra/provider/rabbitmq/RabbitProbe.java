@@ -18,6 +18,7 @@ package org.acemq.infra.provider.rabbitmq;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
@@ -29,6 +30,7 @@ import org.acemq.infra.provider.rabbitmq.ManagementEndpoint.Presence;
 import org.acemq.rabbitmq.admin.AdminException;
 import org.acemq.rabbitmq.admin.ChannelInfo;
 import org.acemq.rabbitmq.admin.ConnectionInfo;
+import org.acemq.rabbitmq.admin.ConsumerInfo;
 import org.acemq.rabbitmq.admin.CurrentUser;
 import org.acemq.rabbitmq.admin.FeatureFlagInfo;
 import org.acemq.rabbitmq.admin.QueueInfo;
@@ -68,6 +70,9 @@ public final class RabbitProbe implements Prober {
     /** The feature flag a broker sets when it knows what a stream queue is. */
     private static final String STREAM_QUEUE = "stream_queue";
 
+    /** The consumer argument that decides where a stream consumer resumes, and the whole problem. */
+    private static final String STREAM_OFFSET = "x-stream-offset";
+
     @Override
     public ProbedCluster probe(ClusterAccess access) {
         try (ReadOnlyAdmin admin = ReadOnlyAdmin.open(access)) {
@@ -84,15 +89,20 @@ public final class RabbitProbe implements Prober {
     private ProbedCluster probe(ClusterAccess access, ReadOnlyAdmin admin) {
         String version = admin.version();
         CurrentUser user = admin.whoami();
+        // Read once and used twice: the capability set wants to know whether the listing could be
+        // taken at all, and the inventory wants what was in it. Asking the broker the same
+        // question twice would leave room for the two answers to differ, which for this one
+        // listing is the difference between "the canary is safe" and "nobody can tell".
+        Optional<List<ConsumerInfo>> attached = consumerListing(admin);
         BrokerFacts facts = new BrokerFacts(version, user.tags(),
                 ManagementEndpoint.check(access, SHOVELS),
                 ManagementEndpoint.check(access, FEDERATION_LINKS),
-                streamQueues(admin), definitionsReadable(admin), consumersReadable(admin));
+                streamQueues(admin), definitionsReadable(admin), attached.isPresent());
 
         ProbedCluster.Builder builder = ProbedCluster.named(access.name())
                 .product("RabbitMQ")
                 .version(version);
-        builder.inventory(inventory(admin, builder));
+        builder.inventory(inventory(admin, builder, access.name(), attached));
         RabbitCapabilities.of(facts, builder);
         notes(access, facts, builder);
         return builder.build();
@@ -116,7 +126,8 @@ public final class RabbitProbe implements Prober {
         }
     }
 
-    private Inventory inventory(ReadOnlyAdmin admin, ProbedCluster.Builder builder) {
+    private Inventory inventory(ReadOnlyAdmin admin, ProbedCluster.Builder builder,
+                                String cluster, Optional<List<ConsumerInfo>> attached) {
         Inventory.Builder inventory = Inventory.counting()
                 .exchanges(counted(builder, "exchanges", admin::exchanges))
                 .bindings(counted(builder, "bindings", admin::bindings))
@@ -143,14 +154,79 @@ public final class RabbitProbe implements Prober {
         // are on this channel", and never "which connections are consuming" -- which is what the
         // close step's `role: consumer` selector has to match on. So the two are joined here.
         Map<String, Integer> consuming = new HashMap<>();
+        Map<String, ChannelInfo> channels = new HashMap<>();
         for (ChannelInfo channel : listed(builder, "channels", admin::channels)) {
             consuming.merge(channel.connectionName(), channel.consumerCount(), Integer::sum);
+            channels.put(channel.name(), channel);
         }
         for (ConnectionInfo connection : listed(builder, "connections", admin::connections)) {
             inventory.connection(connection.name(), connection.user(),
                     consuming.getOrDefault(connection.name(), 0));
         }
+
+        consumers(inventory, cluster, attached, channels);
         return inventory.build();
+    }
+
+    /**
+     * Who is consuming which queue, which is the one listing a canary cannot be safe without.
+     *
+     * <p>A third join, and the awkward one. {@code /api/consumers} names the queue and the channel
+     * and does not name the user, so the user comes from the channel listing — and a consumer whose
+     * channel is not in that listing is left with the channel's own name in the user's place rather
+     * than dropped. A consumer missing from the check is a consumer the canary would move a queue
+     * out from under, so the failure has to be visible rather than tidy: an unrecognised name is
+     * not in anybody's {@code services:} list and the scope check refuses on it, which is the right
+     * way for this to go wrong.
+     */
+    private void consumers(Inventory.Builder inventory, String cluster,
+                           Optional<List<ConsumerInfo>> attached,
+                           Map<String, ChannelInfo> channels) {
+        if (attached.isEmpty()) {
+            inventory.consumersUnreadable("these credentials cannot read /api/consumers on "
+                    + cluster + ", which needs the monitoring or administrator tag");
+            return;
+        }
+        for (ConsumerInfo consumer : attached.get()) {
+            ChannelInfo channel = channels.get(consumer.channelName());
+            String user = channel == null ? consumer.channelName() : channel.user();
+            String connection = channel == null ? consumer.channelName() : channel.connectionName();
+            Optional<String> offset = streamOffset(consumer);
+            if (offset.isPresent()) {
+                inventory.streamConsumer(consumer.queue(), connection, user, offset.get());
+            } else {
+                inventory.consumer(consumer.queue(), connection, user);
+            }
+        }
+    }
+
+    /**
+     * The {@code x-stream-offset} a consumer asked for, as it asked for it.
+     *
+     * <p>As written, because the projection in the plan has to say what the client said. The value
+     * is a word, a number or a timestamp depending on what the client wanted, so it is stringified
+     * rather than parsed — a number turned into a word here would be a plan describing a setting
+     * nobody chose.
+     */
+    private Optional<String> streamOffset(ConsumerInfo consumer) {
+        Object offset = consumer.arguments() == null ? null
+                : consumer.arguments().get(STREAM_OFFSET);
+        return Optional.ofNullable(offset).map(String::valueOf);
+    }
+
+    /**
+     * Every consumer, or nothing at all when the credentials are refused.
+     *
+     * <p>Empty means "could not be read" and never "there are none". That distinction is the whole
+     * reason this returns an {@link Optional}: the two produce identical lists and mean opposite
+     * things about whether a canary may run.
+     */
+    private Optional<List<ConsumerInfo>> consumerListing(ReadOnlyAdmin admin) {
+        try {
+            return Optional.ofNullable(admin.consumers());
+        } catch (AdminException refused) {
+            return Optional.empty();
+        }
     }
 
     /**
@@ -201,12 +277,4 @@ public final class RabbitProbe implements Prober {
         }
     }
 
-    private boolean consumersReadable(ReadOnlyAdmin admin) {
-        try {
-            List<?> consumers = admin.consumers();
-            return consumers != null;
-        } catch (AdminException refused) {
-            return false;
-        }
-    }
 }

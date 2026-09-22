@@ -102,6 +102,14 @@ class RabbitProbeIT {
         consuming = factory.newConnection("orders-service");
         consuming.createChannel().basicConsume("orders.new", true,
                 new DefaultConsumer(consuming.createChannel()));
+
+        // A stream consumer with a position, because the offset it asked for is the whole of what
+        // a plan can say about what moving the stream will do to it. A stream consumer needs a
+        // prefetch: the broker refuses one without.
+        com.rabbitmq.client.Channel tailing = consuming.createChannel();
+        tailing.basicQos(10);
+        tailing.basicConsume("orders.events", false, Map.of("x-stream-offset", "first"),
+                new DefaultConsumer(tailing));
     }
 
     @AfterAll
@@ -255,6 +263,60 @@ class RabbitProbeIT {
                     .isNotEmpty()
                     .allSatisfy(connection ->
                             assertThat(connection.user()).isEqualTo(BROKER.getAdminUsername()));
+        }
+
+        /**
+         * Which consumer is on which queue, which a connection count cannot answer.
+         *
+         * <p>A canary is safe exactly when every consumer of a scoped queue belongs to a named
+         * service, and {@code /api/consumers} names the queue and the channel and never the user —
+         * so the probe joins the two, and this is the assertion that the join works against a real
+         * broker rather than against a fixture somebody wrote to match it.
+         */
+        @Test
+        @Timeout(180)
+        @DisplayName("names who is consuming which queue, with the user they authenticated as")
+        void whoIsConsumingWhat() throws InterruptedException {
+            eventually(() -> probe().inventory().consumers().observed()
+                    && !probe().inventory().consumers().on("orders.new").isEmpty());
+
+            Inventory.Consumers consumers = probe().inventory().consumers();
+            assertThat(consumers.observed()).isTrue();
+            assertThat(consumers.on("orders.new")).singleElement().satisfies(consumer -> {
+                assertThat(consumer.user()).isEqualTo(BROKER.getAdminUsername());
+                assertThat(consumer.connection()).isNotBlank();
+            });
+        }
+
+        /**
+         * The offset a stream consumer asked for, which is the only input the projection has.
+         */
+        @Test
+        @Timeout(180)
+        @DisplayName("reads each stream consumer's x-stream-offset as the client wrote it")
+        void streamOffsets() throws InterruptedException {
+            eventually(() -> !probe().inventory().consumers().on("orders.events").isEmpty());
+
+            assertThat(probe().inventory().consumers().on("orders.events"))
+                    .singleElement()
+                    .extracting(Inventory.Consumer::streamOffset)
+                    .isEqualTo(java.util.Optional.of("first"));
+        }
+
+        /**
+         * A monitoring-only account can still see it, which is the estate this has to work on.
+         *
+         * <p>The account the capability tests use for everything it cannot do: it is the one a
+         * platform team is most likely to hand over for a plan, and a canary planned with it has to
+         * be able to make the check rather than refuse for want of a permission.
+         */
+        @Test
+        @Timeout(180)
+        @DisplayName("reads the consumer listing with a monitoring-only account too")
+        void monitoringCanSeeConsumers() throws InterruptedException {
+            eventually(() -> !probe(WATCHER, "watcher").inventory().consumers()
+                    .on("orders.new").isEmpty());
+            assertThat(probe(WATCHER, "watcher").inventory().consumers().observed()).isTrue();
         }
     }
 

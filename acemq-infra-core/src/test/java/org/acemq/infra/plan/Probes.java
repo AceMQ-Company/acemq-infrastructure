@@ -62,6 +62,22 @@ final class Probes {
         inventory.queue("orders.events", "stream", 0, 3);
         inventory.queue("orders.events.raw", "stream", 0, 1);
 
+        // Who is on what, which is the listing a canary cannot be safe without and the one a
+        // stream projection is made from. The three stream consumers deliberately disagree with
+        // each other about where they restart -- `first`, `next` and nothing at all -- because a
+        // projection that produced one sentence for a whole stream would be the warning this
+        // replaced rather than the answer the roadmap asked for.
+        inventory.consumer("orders.1", "192.168.1.10:51000 -> 10.0.0.2:5672", "orders-service");
+        inventory.consumer("orders.2", "192.168.1.11:51001 -> 10.0.0.2:5672", "orders-service");
+        inventory.consumer("orders.audit", "192.168.1.31:51031 -> 10.0.0.2:5672", "reporting");
+        inventory.streamConsumer("orders.events", "192.168.1.12:51002 -> 10.0.0.2:5672",
+                "audit-writer", "first");
+        inventory.streamConsumer("orders.events", "192.168.1.13:51003 -> 10.0.0.2:5672",
+                "ledger-tailer", "next");
+        inventory.consumer("orders.events", "192.168.1.14:51004 -> 10.0.0.2:5672", "search-indexer");
+        inventory.streamConsumer("orders.events.raw", "192.168.1.15:51005 -> 10.0.0.2:5672",
+                "audit-writer", "2026-09-01T00:00:00Z");
+
         return ProbedCluster.named("blue").version("3.13.7")
                 .facility("shovel", true).facility("federation", true).facility("streams", true)
                 .inventory(inventory.build())

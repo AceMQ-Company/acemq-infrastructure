@@ -18,6 +18,7 @@ package org.acemq.infra.provider;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * What a probe counted on one cluster, in one virtual host.
@@ -27,10 +28,12 @@ import java.util.Objects;
  * reading it in a pull request was not in the room. A reviewer who knows the estate spots a
  * missing vhost in the counts and spots nothing at all in a sentence.
  *
- * <p>Counts for the things the plan only ever reports as a number, and the actual list for the two
- * it has to reason about. Queues are named because the drain matches patterns against them, and
- * because a stream in the list changes what the plan is allowed to say. Connections are named
- * because the close step's selector matches on their user.
+ * <p>Counts for the things the plan only ever reports as a number, and the actual list for the
+ * three it has to reason about. Queues are named because the drain matches patterns against them,
+ * and because a stream in the list changes what the plan is allowed to say. Connections are named
+ * because the close step's selector matches on their user. Consumers are named because a canary is
+ * only safe when every consumer of a scoped queue belongs to a named service, and a connection
+ * count cannot answer that — it says somebody is consuming, never what.
  *
  * @param exchanges how many exchanges are in scope
  * @param bindings how many bindings
@@ -42,10 +45,11 @@ import java.util.Objects;
  *     a topology copy that only looked at queues and exchanges would leave behind
  * @param queues every queue in scope, with its depth and its type
  * @param connections every client connection, with the user it authenticated as
+ * @param consumers who is consuming which queue, or the reason nobody could find out
  */
 public record Inventory(int exchanges, int bindings, int users, int permissions, int policies,
                         int operatorPolicies, int parameters, List<Queue> queues,
-                        List<Connection> connections) {
+                        List<Connection> connections, Consumers consumers) {
 
     public Inventory {
         queues = List.copyOf(queues);
@@ -54,7 +58,7 @@ public record Inventory(int exchanges, int bindings, int users, int permissions,
 
     /** Nothing at all, for the cluster a plan never reads and for a test that does not care. */
     public static Inventory empty() {
-        return new Inventory(0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+        return new Inventory(0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), Consumers.of(List.of()));
     }
 
     /**
@@ -89,6 +93,8 @@ public record Inventory(int exchanges, int bindings, int users, int permissions,
 
         private final List<Queue> queues = new ArrayList<>();
         private final List<Connection> connections = new ArrayList<>();
+        private final List<Consumer> consumers = new ArrayList<>();
+        private String consumersUnreadable;
         private int exchanges;
         private int bindings;
         private int users;
@@ -149,15 +155,142 @@ public record Inventory(int exchanges, int bindings, int users, int permissions,
         }
 
         /** One connection, with the user it authenticated as. */
-        public Builder connection(String name, String user, int consumers) {
-            connections.add(new Connection(name, user, consumers));
+        public Builder connection(String name, String user, int consumerCount) {
+            connections.add(new Connection(name, user, consumerCount));
+            return this;
+        }
+
+        /**
+         * One consumer, on one queue.
+         *
+         * @param queue the queue it is attached to
+         * @param connection the connection it arrived on, for a message that can be acted on
+         * @param user the user that connection authenticated as, which is what a canary's
+         *     {@code services:} list is matched against
+         * @return this builder
+         */
+        public Builder consumer(String queue, String connection, String user) {
+            consumers.add(new Consumer(queue, connection, user, Optional.empty()));
+            return this;
+        }
+
+        /**
+         * One consumer of a stream, with the position it asked to start from.
+         *
+         * @param queue the stream it is attached to
+         * @param connection the connection it arrived on
+         * @param user the user that connection authenticated as
+         * @param streamOffset the {@code x-stream-offset} argument as the client wrote it
+         * @return this builder
+         */
+        public Builder streamConsumer(String queue, String connection, String user,
+                                      String streamOffset) {
+            consumers.add(new Consumer(queue, connection, user,
+                    Optional.ofNullable(streamOffset)));
+            return this;
+        }
+
+        /**
+         * Nobody could be listed, and why.
+         *
+         * <p>The distinction this keeps is the one a canary turns on. A management account that
+         * may not read {@code /api/consumers} produces the same empty list as a queue with nothing
+         * attached to it, and the two mean opposite things: one says the canary is safe and the
+         * other says nobody can tell.
+         *
+         * @param whyNot what stopped the listing, in words somebody can act on
+         * @return this builder
+         */
+        public Builder consumersUnreadable(String whyNot) {
+            this.consumersUnreadable = whyNot;
             return this;
         }
 
         /** What was counted. */
         public Inventory build() {
             return new Inventory(exchanges, bindings, users, permissions, policies,
-                    operatorPolicies, parameters, queues, connections);
+                    operatorPolicies, parameters, queues, connections,
+                    consumersUnreadable == null ? Consumers.of(consumers)
+                            : Consumers.unreadable(consumersUnreadable));
+        }
+    }
+
+    /**
+     * Who is consuming what, or the reason nobody could find out.
+     *
+     * <p>The same shape as a guard's reading and for the same reason: an absent answer is not an
+     * empty one. A canary is safe exactly when every consumer of a scoped queue belongs to a named
+     * service, and a listing that could not be taken supports neither that conclusion nor its
+     * opposite — so it has to be a third answer rather than a list that happens to have nothing in
+     * it.
+     *
+     * @param observed whether the listing could be taken at all
+     * @param all every consumer, meaningless when it could not
+     * @param whyNot what stopped it, empty when it was taken
+     */
+    public record Consumers(boolean observed, List<Consumer> all, String whyNot) {
+
+        public Consumers {
+            all = List.copyOf(all);
+        }
+
+        /**
+         * A listing that was actually taken.
+         *
+         * @param consumers every consumer in scope
+         * @return the listing
+         */
+        public static Consumers of(List<Consumer> consumers) {
+            return new Consumers(true, consumers, "");
+        }
+
+        /**
+         * A listing that could not be taken, and the sentence to print instead.
+         *
+         * @param whyNot what stopped it — a permission, most often
+         * @return the listing
+         */
+        public static Consumers unreadable(String whyNot) {
+            return new Consumers(false, List.of(), whyNot);
+        }
+
+        /**
+         * The consumers attached to one queue.
+         *
+         * @param queue the queue's name
+         * @return its consumers, empty when it has none or when the listing was never taken
+         */
+        public List<Consumer> on(String queue) {
+            return all.stream().filter(consumer -> consumer.queue().equals(queue)).toList();
+        }
+    }
+
+    /**
+     * One consumer, on one queue.
+     *
+     * <p>Modelled beside {@link Connection} rather than folded into it, because a connection
+     * consumes an unknown number of queues and the question a canary asks is per-queue. A
+     * connection count answers "somebody is consuming"; only this answers "who is consuming
+     * {@code orders.notifications}", which is the question that decides whether moving that queue
+     * partitions it.
+     *
+     * @param queue the queue it is attached to
+     * @param connection the connection it arrived on, which is what a report names
+     * @param user the user that connection authenticated as. A canary's {@code services:} list is
+     *     matched against this, for the same reason the close step's selector is: the broker has
+     *     no concept of a service, and the user is the only identity it carries from end to end
+     * @param streamOffset the {@code x-stream-offset} this consumer asked for, when it is a stream
+     *     consumer and the broker reported one. Absent means either not a stream or not stated,
+     *     and RabbitMQ reads a stream consumer that states nothing as {@code next}
+     */
+    public record Consumer(String queue, String connection, String user,
+                           Optional<String> streamOffset) {
+
+        public Consumer {
+            Objects.requireNonNull(queue, "queue");
+            Objects.requireNonNull(connection, "connection");
+            Objects.requireNonNull(user, "user");
+            Objects.requireNonNull(streamOffset, "streamOffset");
         }
     }
 
