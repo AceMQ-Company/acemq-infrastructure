@@ -4,10 +4,88 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.1.0` is released: [milestone one](docs/roadmap.md), which is `validate` and
-`plan` and nothing that writes to a broker. What is unreleased below is
-[phase 2](docs/roadmap.md) — the executor, `apply`, and the rollback that a test
-actually runs.
+`0.2.0` is released: the executor, `apply`, and the rollback that a test
+actually runs. What is unreleased below is [phase 3](docs/roadmap.md) — `canary`
+and `mirror` as real operations, the consumer check that is the only reason a
+canary is safe, and stream handling.
+
+## [Unreleased]
+
+### Added
+
+- **`canary`, as a real operation.** The same executor, the same guards and the
+  same rollback as a blue/green cutover — which [docs/canary.md](docs/canary.md)
+  argues is a feature rather than an admission — with `deployment.scope` as the
+  only thing that differs. `scope.queues` becomes the drain's patterns and
+  `scope.services` becomes the close step's selector, both through the default
+  step list, so the printed list is still a list a file could have written.
+- **The consumer check, which is the reason the operation is safe at all.**
+  Every consumer of a scoped queue must be one of the named services, checked
+  against the live estate before the first write and refused by name when it is
+  not: moving a queue without one of its consumers is the partitioned queue the
+  whole page is about. A name in `services:` is matched against the user a
+  connection authenticated as, which is the identity the broker actually carries
+  and the one the close step already matches on.
+- **The other direction of that check**, which the documentation did not state.
+  A named service consuming a queue the scope left out is refused too. It fails
+  more quietly than the documented case rather than less: the queue is not split
+  across two clusters, it is abandoned on the source while the service watches
+  an empty copy on the target, and nothing about either cluster looks wrong.
+- **A refusal when the check cannot be made.** A management account that may not
+  read the consumer listing produces an empty list, and an empty list is
+  indistinguishable from a queue with nothing attached. `Inventory.Consumers`
+  keeps "could not be read" apart from "there are none" for that one reason, and
+  a canary over the first of them refuses rather than passing quietly.
+- **Guards that narrow with the scope.** A canary measures the queues its scope
+  resolved to rather than the whole virtual host. A `consumers >= 1` on the
+  target counted vhost-wide is satisfied by somebody else's application, and an
+  `unacked: 0` on the source waits out its timeout on a workload the canary is
+  deliberately not touching. The integration test holds an unsettled delivery on
+  an out-of-scope queue for the whole cutover to prove it.
+- **The endpoint row, at the top of the plan rather than at step nine.** A
+  canary needs per-service routing, so that one service resolves to the target
+  while everything else still resolves to the source, and in an estate where
+  every application reads the same `RABBITMQ_URL` from the same config map that
+  is the piece of work the canary actually depends on. The plan says so as its
+  first warning, worded against the `endpoint:` block the file actually wrote.
+- **`mirror`, with the refusals that make it an observation.** A mirror must not
+  drain — a shovel consumes, and a mirror exists to leave the source
+  authoritative — and must not switch the endpoint, because routing clients at a
+  cluster whose consumers are meant to be discarding their results means every
+  message is processed by something that throws the answer away. Both are
+  refused before the first write, and the validator refuses the endpoint switch
+  in the file as well.
+- **The shadow-mode warning, on every plan and every run that declares a
+  mirror**, including a `blueGreen` file with a mirror step in it. It is the one
+  thing the tool genuinely cannot check, and `docs/canary.md` is explicit that
+  it must be printed rather than left silent: a mirror whose consumers are not
+  in shadow mode is canary-by-consumer, which that page refuses.
+- **Stream handling: the refusal, the projection and the confirmation.** A
+  stream in a drain's scope is refused until `streams.acknowledged` is set, and
+  what is being acknowledged is now printed per consumer rather than per stream
+  — one stream's consumers routinely disagree, and `first` is a week of
+  reprocessing where `next` is a silent gap. Five settings get five different
+  sentences, including the absent one, which RabbitMQ reads as `next`.
+- **`streams.restartAt` and `streams.note`**, which `docs/message-state.md` has
+  always written out and the model did not carry. `restartAt` sets nothing —
+  nothing here can move an offset — so it is checked against what the consumers
+  actually asked for, and a file that acknowledged one consequence over an
+  estate that will produce another is refused. A confirmation about the wrong
+  thing is not a confirmation.
+- **A `scope` block in the plan output**, above the numbered steps, saying what
+  the scope resolved to on the source and who is attached to it. For a canary
+  that block is the operation; the other two operations do not print one.
+
+### Changed
+
+- `Inventory` carries who is consuming which queue, and whether that could be
+  established at all. A connection count answers "somebody is consuming" and the
+  canary's question is "who is consuming `orders.notifications`".
+- The validator refuses a canary whose close step has no `select.users`, which
+  means every consuming connection on the cluster — right for a whole-estate
+  cutover and an estate-wide outage inside a canary — and one that closes a
+  service its own `scope.services` does not name, which is a file disagreeing
+  with itself about which workload is moving.
 
 ## [0.2.0] - 2026-09-22
 
