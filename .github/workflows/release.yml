@@ -3,13 +3,21 @@
 #
 # Triggered by a tag:  git tag -a v0.1.0 -m 0.1.0 && git push origin v0.1.0
 #
-# What this publishes, and what it does not. Five Maven artifacts: the parent
-# pom, acemq-infra-core, acemq-infra-rabbitmq, acemq-infra-execute and
-# acemq-infra-cli. The CLI jar
-# is runnable in the ordinary way once its dependencies are on the classpath,
-# which is what a Maven consumer gets. The GraalVM native images are phase 4 and
-# are deliberately not here — a release that quietly shipped half a distribution
-# would be worse than one that ships a library and says so.
+# What this publishes. Five Maven artifacts — the parent pom, acemq-infra-core,
+# acemq-infra-rabbitmq, acemq-infra-execute and acemq-infra-cli — and, since
+# phase 4, three native binaries attached to the GitHub release: linux-amd64,
+# linux-arm64 and darwin-arm64, with a SHA256SUMS file and build provenance for
+# each one. The library and the CLI go out together, in one release, which is
+# what docs/shape.md committed to: a CLI with no library underneath it cannot be
+# embedded and a library with no CLI over it cannot be demonstrated.
+#
+# The ordering is the part worth reading. The binaries are built and the whole
+# cutover suite is run against them BEFORE anything reaches the Maven feed.
+# docs/shape.md's rule is that a green jar proves nothing about the artifact
+# users get, and a release workflow that published the jars and then discovered
+# the binary was broken would have obeyed the letter of that and none of it.
+# Nothing here is published until the thing people download has moved messages
+# between two real brokers.
 #
 # The deploy key. The built-in GITHUB_TOKEN is scoped to this repository, so it
 # cannot write to AceMQ-Company/maven. MAVEN_REPO_DEPLOY_KEY is a deploy key
@@ -35,7 +43,131 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------- the version
+  #
+  # Worked out once, here, because four jobs need it and three of them stamp it
+  # into something. A tag name and a dispatch input are both caller-controlled
+  # text, so it is validated in one place rather than trusted in four.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Work out the version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${TAG_NAME#v}"
+          fi
+          # An allow-list, not a deny-list. The version is concatenated into a
+          # Maven argument, a file name and a commit message, so anything that is
+          # not plainly a version number is refused rather than escaped.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "::error::not a release version: '$VERSION'"
+            exit 1
+          fi
+          case "$VERSION" in
+            *SNAPSHOT*)
+              echo "::error::refusing to publish a SNAPSHOT to the release repository: $VERSION"
+              exit 1
+              ;;
+          esac
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "releasing $VERSION"
+
+  # ---------------------------------------------------------------- the binaries
+  #
+  # Three runners for three targets, because GraalVM builds for the host and
+  # does not cross-compile. docs/shape.md called this a permanent tax on every
+  # release and it was right; what it bought is that every binary attached to a
+  # release has been run on the architecture it was built for, and none of them
+  # is a cross-compiled artifact nobody has executed.
+  binaries:
+    needs: [version]
+    name: the ${{ matrix.platform }} binary
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-amd64
+            docker: true
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            docker: true
+          - os: macos-14
+            platform: darwin-arm64
+            docker: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stamp the version
+        # Before the build rather than after it. The binary answers --version out
+        # of the manifest it was compiled from, so a release built at
+        # 0.1.0-SNAPSHOT would ship an executable that cannot say what it is.
+        # NativeCommandLineIT asserts that it can, which is what turns this step
+        # from a hope into a check.
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          mvn -B --no-transfer-progress versions:set \
+            -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+
+      - name: Install the reactor
+        run: mvn -B --no-transfer-progress install -DskipTests -DskipITs
+
+      - name: Build the binary and run the whole suite against it
+        if: matrix.docker
+        run: mvn -B --no-transfer-progress -Pnative -pl acemq-infra-native clean verify
+
+      - name: Build the binary and run what needs no broker
+        # GitHub's macOS runners have no Docker daemon, so the two cutover tests
+        # cannot run here. ci.yml carries a step that fails if that ever stops
+        # being true; this one only has to say why the command is shorter.
+        if: ${{ !matrix.docker }}
+        run: |
+          mvn -B --no-transfer-progress -Pnative -pl acemq-infra-native clean verify \
+            -Dit.test='NativeCommandLineIT,NativeHttpsIT'
+
+      - name: Check nothing skipped
+        run: python3 etc/check-nothing-skipped.py .
+
+      - name: Name it after what it is
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          cp acemq-infra-native/target/acemq-infra "assets/acemq-infra-$VERSION-$PLATFORM"
+          # Run once more under the name it will be downloaded as, which catches
+          # the one thing a copy can break and nothing else checks.
+          "assets/acemq-infra-$VERSION-$PLATFORM" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: assets/*
+          retention-days: 1
+          if-no-files-found: error
+
   publish:
+    needs: [version, binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,44 +203,13 @@ jobs:
           fi
           echo "the feed deploy key is present"
 
-      - name: Work out the version
-        id: version
-        env:
-          # Through the environment rather than interpolated into the script. A
-          # tag name and a dispatch input are both caller-controlled text, and
-          # inlining either one lets whoever writes it run shell here.
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="${TAG_NAME#v}"
-          fi
-          # An allow-list, not a deny-list. The version is concatenated into a
-          # Maven argument and a commit message, so anything that is not plainly
-          # a version number is refused rather than escaped.
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
-            echo "::error::not a release version: '$VERSION'"
-            exit 1
-          fi
-          case "$VERSION" in
-            *SNAPSHOT*)
-              echo "::error::refusing to publish a SNAPSHOT to the release repository: $VERSION"
-              exit 1
-              ;;
-          esac
-          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "publishing $VERSION"
-
       - name: Check the changelog records this version
         # A release whose changelog still says [Unreleased] documents itself as
         # containing nothing released, which is the one question a changelog
         # exists to answer. Two repositories in this family shipped 0.1.0 in
         # exactly that state and nobody noticed for seventeen days.
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ needs.version.outputs.value }}
         run: |
           if ! grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
             echo "::error::CHANGELOG.md has no [$VERSION] section. Roll [Unreleased] into it first."
@@ -148,7 +249,7 @@ jobs:
         # names the version being released, so the tag and the artifacts cannot
         # disagree.
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ needs.version.outputs.value }}
         run: |
           mvn -B --no-transfer-progress versions:set \
             -DnewVersion="$VERSION" -DgenerateBackupPoms=false
@@ -163,7 +264,7 @@ jobs:
         # in the tree before anything is pushed.
         working-directory: maven-repo
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ needs.version.outputs.value }}
         run: |
           missing=""
           for artifact in acemq-infra-parent acemq-infra-core acemq-infra-rabbitmq acemq-infra-execute acemq-infra-cli; do
@@ -186,7 +287,7 @@ jobs:
         id: push
         working-directory: maven-repo
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ needs.version.outputs.value }}
         run: |
           git config user.name "acemq-release"
           git config user.email "noreply@acemq.org"
@@ -209,7 +310,7 @@ jobs:
         # local repository -- which pulls core and rabbitmq with it and so
         # exercises the whole release rather than one artifact of it.
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ needs.version.outputs.value }}
         run: |
           POM="https://acemq.org/maven/org/acemq/acemq-infra-cli/$VERSION/acemq-infra-cli-$VERSION.pom"
           echo "waiting for Pages to serve $VERSION"
@@ -237,23 +338,132 @@ jobs:
             -Dartifact="org.acemq:acemq-infra-cli:$VERSION"
           echo "$VERSION resolves from a clean repository."
 
+  # ---------------------------------------------------------------- the download
+  #
+  # The three binaries onto the GitHub release, with the two things somebody who
+  # downloaded one needs to check it.
+  #
+  # A checksum file, which answers "did this arrive intact" and nothing more:
+  # it sits next to the thing it describes, so it catches a truncated download
+  # or a proxy that returned an error page with a 200, and it is not evidence
+  # about who built the binary.
+  #
+  # And build provenance, which is the part that answers that. GitHub signs a
+  # statement that these exact bytes came out of this workflow, in this
+  # repository, at this commit, and `gh attestation verify` checks it against a
+  # transparency log. That is a claim a checksum cannot make, and it is the one
+  # worth having for something people curl onto a machine that is about to move
+  # a production broker. docs/install.md gives the command.
+  release-assets:
+    needs: [version, publish, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      # Writing the release and its assets.
+      contents: write
+      # Signing the provenance, and recording it.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: downloaded
+          merge-multiple: true
+
+      - name: Count them before anything is uploaded
+        # Three, not two. A release carrying a linux-amd64 binary and nothing
+        # else resolves perfectly for whoever is on linux-amd64 and is broken for
+        # everybody the Action sends to the other two names, which is the
+        # download equivalent of deploying four of five Maven artifacts.
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          cd downloaded
+          missing=""
+          for platform in linux-amd64 linux-arm64 darwin-arm64; do
+            [ -f "acemq-infra-$VERSION-$platform" ] || missing="$missing $platform"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::these binaries did not reach the release:$missing"
+            exit 1
+          fi
+          chmod +x acemq-infra-*
+          ls -l
+
+      - name: Write the checksums
+        working-directory: downloaded
+        run: |
+          set -euo pipefail
+          # Sorted, so that the file is the same file whenever the artifacts
+          # arrive in a different order, and readable by `sha256sum -c` and
+          # `shasum -a 256 -c` without editing.
+          sha256sum acemq-infra-* | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: downloaded/acemq-infra-*
+
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.value }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if ! gh release view "$tag" --repo "$REPO" > /dev/null 2>&1; then
+            gh release create "$tag" --repo "$REPO" \
+              --title "acemq-infrastructure $VERSION" \
+              --notes "See CHANGELOG.md for what is in this release, and docs/install.md for how to install and verify the binaries."
+          fi
+          # --clobber so that re-running a release that half finished replaces
+          # what is there rather than failing on the first asset that already
+          # exists, which is the state a retried release is always in.
+          gh release upload "$tag" --repo "$REPO" --clobber \
+            downloaded/acemq-infra-* downloaded/SHA256SUMS
+
+      - name: Check a stranger can download one
+        # The only step that asks what a user actually gets. From the public URL,
+        # with no token, through the redirect, and checked against the checksum
+        # that was just published -- because an asset that is present in the API
+        # and not being served is a release that looks finished and is not.
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          asset="acemq-infra-$VERSION-linux-amd64"
+          base="https://github.com/$REPO/releases/download/v$VERSION"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-delay 10 -o "$asset" "$base/$asset"
+          curl -fsSL --retry 5 --retry-delay 10 -o SHA256SUMS "$base/SHA256SUMS"
+          grep " $asset\$" SHA256SUMS | sha256sum -c -
+          chmod +x "$asset"
+          "./$asset" --version
+
   notify:
-    needs: [publish]
+    needs: [publish, release-assets]
     # Only when something actually reached the feed. A run that failed before
     # the push published nothing, and announcing that in either direction tells
     # the channel about a version that does not exist.
     if: always() && needs.publish.outputs.published == 'true'
     uses: AceMQ-Company/acemq-java-amqp/.github/workflows/slack-notify.yml@main
     with:
-      status: ${{ needs.publish.result }}
+      # Both halves of the release have to have worked for this to read as done.
+      # The jars being on the feed while the binaries never reached the release
+      # is a half-shipped distribution, and announcing it as finished is how
+      # somebody spends a morning looking for a download that is not there.
+      status: ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success') && 'success' || 'failure' }}
       title: >-
-        ${{ needs.publish.result == 'success'
+        ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success')
             && format('acemq-infrastructure {0} released', github.ref_name)
             || format('acemq-infrastructure {0} is published but the release did not finish', github.ref_name) }}
       message: >-
-        ${{ needs.publish.result == 'success'
-            && 'On the Maven feed and resolving from a clean repository. This release plans a cutover and writes nothing to any broker; apply is phase 2.'
-            || 'The artifacts are on the feed and consumers can resolve them, but a later step did not pass. Most often that is GitHub Pages taking longer than the verify step waits. Check the run before doing anything to the tag.' }}
+        ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success')
+            && 'On the Maven feed and resolving from a clean repository, with native binaries for linux-amd64, linux-arm64 and darwin-arm64 on the release. Every one of them ran the cutover suite before any of this was published.'
+            || 'The artifacts are on the feed and consumers can resolve them, but a later step did not pass. Most often that is GitHub Pages taking longer than the verify step waits, or an asset not being served yet. Check the run before doing anything to the tag.' }}
       # Roadworks rather than a red dot, and the title says "published but the
       # release did not finish" rather than "failed". By the time this runs the
       # artifacts are on the feed: the release is out, and what did not finish
@@ -264,7 +474,7 @@ jobs:
       # back on the status-derived tick does not work: in GitHub's expression
       # language `a && '' || b` yields b, because an empty string is falsy, so
       # every successful release would be announced with roadworks.
-      icon: ${{ needs.publish.result == 'success' && ':white_check_mark:' || ':construction:' }}
+      icon: ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success') && ':white_check_mark:' || ':construction:' }}
       url: https://acemq.org/maven/
     secrets:
       # Explicit, not `inherit`. A reusable workflow in another repository does

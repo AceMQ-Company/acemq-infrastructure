@@ -1,4 +1,4 @@
-# Four things can break here, and CI checks all four.
+# Five things can break here, and CI checks all five.
 #
 #   * the shell and Python scripts parse, and shellcheck is happy with them;
 #   * the four Java modules build and their tests pass -- the configuration
@@ -10,11 +10,23 @@
 #     one that matters. A linter whose rules have quietly stopped firing passes
 #     everything, including the files that describe the mistakes it exists to
 #     catch, and looks exactly like a linter that works.
+#   * and, since phase 4, the same cutover runs against the BINARY.
 #
 # The last two run twice over, once against scripts/lint-deployment.py and once
 # against the Java validator's own suite, which is deliberate: the two
 # implementations exist side by side until the CLI ships, and the examples are
 # what holds them in agreement.
+#
+# The fifth is the one that is easy to put in a nightly and should not be. What
+# this project distributes is a GraalVM native image, and docs/shape.md is
+# explicit about what that costs: reflection is what a native image takes away,
+# a missing registration does not fail the build, and a green jar proves nothing
+# about the artifact users get. That is not a hypothetical here -- the first
+# image this repository ever built passed every jar test and could not read a
+# single management API response. So the binary is built on every push and every
+# pull request, and the cutover suite is run against it, on both architectures it
+# ships for. It is the slowest job on the board and it is the only one that tests
+# the thing people download.
 name: ci
 
 on:
@@ -133,6 +145,109 @@ jobs:
           path: |
             **/target/surefire-reports/**
             **/target/failsafe-reports/**
+          retention-days: 7
+
+  native:
+    name: the binary on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    # The image takes a couple of minutes and the cutover suite takes several
+    # more, with the guards waiting out their real settle windows. Generous
+    # rather than tight: a timeout that fires on a busy runner teaches people to
+    # re-run red jobs without reading them.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # The three targets phase 4 ships, each built on the architecture it is
+        # for. GraalVM builds for the host and does not cross-compile, which
+        # docs/shape.md calls a permanent tax on every release and which is the
+        # honest reason this is a matrix rather than three lines.
+        #
+        # Both Linux entries are ordinary GitHub-hosted runners: the arm64 ones
+        # are free for public repositories, and this repository is public. There
+        # is no self-hosted runner and no larger-runner allowance behind this.
+        include:
+          - os: ubuntu-latest
+            platform: linux-amd64
+            docker: true
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            docker: true
+          - os: macos-14
+            platform: darwin-arm64
+            docker: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report the toolchain
+        run: |
+          java -version
+          native-image --version
+
+      - name: Install the reactor
+        # The image is built from this commit rather than from a published
+        # snapshot, so the four modules under it have to be in the local
+        # repository first.
+        run: mvn -B --no-transfer-progress install -DskipTests -DskipITs
+
+      # Everything: the image, the command-line suite, the TLS handshake and two
+      # cutovers against two pairs of real brokers. `clean` deliberately -- without
+      # it the plugin can reuse the previous binary and report a pass for code
+      # that was never compiled, which the prior art in acemq-java-amqp learned
+      # while its own native test was being written.
+      - name: Build the binary and run the whole suite against it
+        if: matrix.docker
+        run: mvn -B --no-transfer-progress -Pnative -pl acemq-infra-native clean verify
+
+      # macOS gets the half of the suite that needs no broker, because GitHub's
+      # macOS runners have no Docker daemon and the cutover tests are two
+      # RabbitMQ containers on a shared network. That is a real gap and it is
+      # named rather than papered over: the darwin-arm64 binary is checked for
+      # the command surface, the configuration format and TLS, and the cutover
+      # itself is proved on Linux.
+      - name: Build the binary and run what needs no broker
+        if: ${{ !matrix.docker }}
+        run: |
+          mvn -B --no-transfer-progress -Pnative -pl acemq-infra-native clean verify \
+            -Dit.test='NativeCommandLineIT,NativeHttpsIT'
+
+      - name: Check the reason for that gap still holds
+        if: ${{ !matrix.docker }}
+        # A narrowed suite with a reason attached is fine. A narrowed suite whose
+        # reason quietly stopped being true is how coverage disappears, so the
+        # reason is asserted rather than written in a comment and left. If this
+        # step ever fails, GitHub has given macOS runners a Docker daemon and
+        # this job should be moved to the full suite.
+        run: |
+          if docker info > /dev/null 2>&1; then
+            echo "::error::This runner has a working Docker daemon, so the cutover suite can run"
+            echo "::error::here after all. Move macos-14 to the full command in this workflow and"
+            echo "::error::delete this step."
+            exit 1
+          fi
+          echo "no Docker daemon on this runner, which is why the cutover suite runs on Linux only"
+
+      - name: Check nothing skipped
+        run: python3 etc/check-nothing-skipped.py .
+
+      - name: The binary says what it is
+        run: acemq-infra-native/target/acemq-infra --version
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-reports-${{ matrix.platform }}
+          path: |
+            **/target/failsafe-reports/**
+            **/target/native/**/*.txt
           retention-days: 7
 
   examples:
