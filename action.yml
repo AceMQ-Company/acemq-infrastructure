@@ -1,0 +1,265 @@
+# A cutover from a pipeline, in three lines and with nothing installed.
+#
+#   - uses: AceMQ-Company/acemq-infrastructure@v0.4.0
+#     with:
+#       command: plan
+#       file: deployment.yaml
+#
+# What this is, and what it deliberately is not. It downloads the native binary
+# for the runner it is on, checks what it downloaded, and runs it. It does not
+# wrap the command surface in a second set of names: `args` passes anything
+# through, and every flag documented in docs/install.md works here unchanged,
+# because a pipeline that has to learn two spellings of --dry-run is a pipeline
+# where somebody eventually writes the wrong one. The single exception is
+# assume-yes, for the reason given where it is declared, and it is YAML's fault.
+#
+# The one thing worth reading before using `command: apply`. The tool stops and
+# asks before it writes, and a runner is nobody: there is no terminal, so the
+# question comes back unanswered and the run refuses. `assume-yes: true` is how a
+# pipeline says it has already decided, and it consents to the run STARTING and
+# to nothing after it. A file with `endpoint: kind: external` still refuses in
+# preflight, before the first write, because an external switch waits for a
+# human by definition. Give such a file an `endpoint: kind: hook` if a pipeline
+# is meant to run it end to end.
+name: AceMQ infrastructure
+description: Plan or apply a broker cutover with acemq-infra, without installing anything.
+
+branding:
+  icon: shuffle
+  color: blue
+
+inputs:
+  command:
+    description: 'validate, plan or apply.'
+    required: true
+  file:
+    description: 'The deployment file to read.'
+    required: true
+  version:
+    description: >-
+      Which release to run, without the leading v. Defaults to the ref this action was used at, so
+      @v0.4.0 runs 0.4.0 and the action and the binary cannot disagree. Give it a version explicitly
+      when the action is used from a branch.
+    required: false
+    default: ''
+  dry-run:
+    description: 'apply only: re-probe both clusters and rehearse every step, writing nothing.'
+    required: false
+    default: 'false'
+  # Spelled out rather than `yes:`, which would have matched the flag exactly and
+  # is the one place that rule has to bend. `yes` is a boolean in YAML 1.1, so an
+  # input by that name is a key that half the tooling in the ecosystem -- linters,
+  # editors, anything built on libyaml -- turns into `true:` on the way past. An
+  # input nobody can write reliably is worse than an input with a second name,
+  # and --assume-yes is the same word every package manager uses for it.
+  assume-yes:
+    description: >-
+      apply only: consent to the run starting, which is what --yes does. It does not answer any
+      question the run asks afterwards.
+    required: false
+    default: 'false'
+  require-variables:
+    description: 'validate only: an unset ${VAR} is an error rather than a warning.'
+    required: false
+    default: 'false'
+  args:
+    description: 'Anything else to pass through, split on whitespace.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Where to run, for relative paths in the deployment file.'
+    required: false
+    default: '.'
+  verify-attestation:
+    description: >-
+      Check the binary against the build provenance GitHub recorded when the release was built, with
+      `gh attestation verify`. Off by default only because it needs a token: pass github-token and
+      turn it on, and see docs/install.md for what it buys over the checksum.
+    required: false
+    default: 'false'
+  github-token:
+    description: 'A token, for verify-attestation and for release downloads on a rate-limited runner.'
+    required: false
+    default: ''
+  summary:
+    description: 'Put what the tool printed into the job summary, where a plan can be read.'
+    required: false
+    default: 'true'
+
+outputs:
+  exit-code:
+    description: '0 ok, 1 findings or a refused or stopped run, 2 a bad command line.'
+    value: ${{ steps.run.outputs.exit-code }}
+  output-file:
+    description: 'A file holding everything the tool printed, for a later step to read.'
+    value: ${{ steps.run.outputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Work out which binary this runner needs
+      id: target
+      shell: bash
+      env:
+        RUNNER_OS_IN: ${{ runner.os }}
+        RUNNER_ARCH_IN: ${{ runner.arch }}
+        VERSION_IN: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+
+        # Three published targets and no cross-compilation, which is the honest
+        # cost of a native image and is written down in docs/shape.md. A runner
+        # that is not one of them is told so rather than handed a binary built
+        # for something else.
+        case "${RUNNER_OS_IN}/${RUNNER_ARCH_IN}" in
+          Linux/X64)   platform=linux-amd64 ;;
+          Linux/ARM64) platform=linux-arm64 ;;
+          macOS/ARM64) platform=darwin-arm64 ;;
+          *)
+            echo "::error::acemq-infra publishes linux-amd64, linux-arm64 and darwin-arm64."
+            echo "::error::This runner is ${RUNNER_OS_IN}/${RUNNER_ARCH_IN}, which is none of them."
+            exit 1
+            ;;
+        esac
+
+        version="$VERSION_IN"
+        if [ -z "$version" ]; then
+          # The tag the action itself was used at, so that @v0.4.0 runs 0.4.0.
+          # Anything that is not plainly a version -- a branch, a commit -- is
+          # refused rather than guessed at, because guessing here means running
+          # a different tool from the one the workflow names.
+          case "$ACTION_REF" in
+            v[0-9]*) version="${ACTION_REF#v}" ;;
+            *)
+              echo "::error::This action was used at '${ACTION_REF:-an unknown ref}', which is not a"
+              echo "::error::release tag, so there is no version to infer. Pass version: explicitly."
+              exit 1
+              ;;
+          esac
+        fi
+        if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+          echo "::error::'$version' is not a version number."
+          exit 1
+        fi
+
+        {
+          echo "platform=$platform"
+          echo "version=$version"
+          echo "asset=acemq-infra-$version-$platform"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Download it, and check what arrived
+      id: download
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        ASSET: ${{ steps.target.outputs.asset }}
+        VERSION: ${{ steps.target.outputs.version }}
+        VERIFY_ATTESTATION: ${{ inputs.verify-attestation }}
+      run: |
+        set -euo pipefail
+
+        base="https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION"
+        into="$RUNNER_TEMP/acemq-infra-$VERSION"
+        mkdir -p "$into"
+
+        curl -fsSL --retry 3 -o "$into/$ASSET" "$base/$ASSET"
+        curl -fsSL --retry 3 -o "$into/SHA256SUMS" "$base/SHA256SUMS"
+
+        # The checksum first, because it is free and catches the ordinary
+        # failure: a download that was truncated, a proxy that returned an error
+        # page with a 200, a mirror that is out of date. It is signed by nothing
+        # and comes from the same release as the binary, so it is not evidence
+        # about who built either one -- that is what the attestation below is
+        # for, and docs/install.md says so rather than letting the word "verify"
+        # do more work than it can carry.
+        #
+        # Two spellings of the same tool: coreutils on Linux, Perl's shasum on
+        # macOS, which has no sha256sum. Both read the same file and both refuse
+        # the same way, so the only thing that differs is the word.
+        if command -v sha256sum > /dev/null; then
+          check() { sha256sum -c -; }
+        else
+          check() { shasum -a 256 -c -; }
+        fi
+        ( cd "$into" && grep " $ASSET\$" SHA256SUMS | check )
+
+        if [ "$VERIFY_ATTESTATION" = "true" ]; then
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::verify-attestation is on and no github-token was given. The check needs"
+            echo "::error::one to reach the attestations API. Pass github-token, or turn it off and"
+            echo "::error::know that the checksum alone says nothing about where the binary came from."
+            exit 1
+          fi
+          gh attestation verify "$into/$ASSET" --repo AceMQ-Company/acemq-infrastructure
+        fi
+
+        chmod +x "$into/$ASSET"
+        echo "binary=$into/$ASSET" >> "$GITHUB_OUTPUT"
+
+    - name: Run it
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BINARY: ${{ steps.download.outputs.binary }}
+        COMMAND: ${{ inputs.command }}
+        FILE: ${{ inputs.file }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        ASSUME_YES: ${{ inputs.assume-yes }}
+        REQUIRE_VARIABLES: ${{ inputs.require-variables }}
+        EXTRA: ${{ inputs.args }}
+        SUMMARY: ${{ inputs.summary }}
+      run: |
+        set -uo pipefail
+
+        case "$COMMAND" in
+          validate|plan|apply) ;;
+          *)
+            echo "::error::command must be validate, plan or apply, not '$COMMAND'."
+            exit 1
+            ;;
+        esac
+
+        # Written as ifs rather than as `test && argv+=(...)`, which reads better
+        # and is also the only correct form here: GitHub runs a composite bash
+        # step with -e, and a trailing `a && b` whose test is false makes the
+        # whole statement return 1, which ends the step. A pipeline that silently
+        # stopped whenever dry-run was off would be an interesting bug to find.
+        argv=("$COMMAND" -f "$FILE")
+        if [ "$DRY_RUN" = "true" ]; then argv+=(--dry-run); fi
+        if [ "$ASSUME_YES" = "true" ]; then argv+=(--yes); fi
+        if [ "$REQUIRE_VARIABLES" = "true" ]; then argv+=(--require-variables); fi
+        if [ -n "$EXTRA" ]; then
+          # Unquoted on purpose: this is the passthrough, and the whole of its
+          # job is to be split into words the way a shell would split them.
+          # shellcheck disable=SC2206
+          argv+=($EXTRA)
+        fi
+
+        output="$RUNNER_TEMP/acemq-infra-output.txt"
+        set +e
+        "$BINARY" "${argv[@]}" 2>&1 | tee "$output"
+        status=${PIPESTATUS[0]}
+        set -e
+
+        {
+          echo "exit-code=$status"
+          echo "output-file=$output"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "$SUMMARY" = "true" ]; then
+          # The reason plan exists at all is that its output is a thing people
+          # read before agreeing to something. A job summary is where a reviewer
+          # will actually see it; a fold in the log is where it goes to die.
+          {
+            echo "### acemq-infra $COMMAND — \`$FILE\`"
+            echo
+            echo '```'
+            cat "$output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        exit "$status"
