@@ -72,6 +72,7 @@
     <module>acemq-infra-rabbitmq</module>
     <module>acemq-infra-execute</module>
     <module>acemq-infra-cli</module>
+    <module>acemq-infra-operator</module>
   </modules>
 
   <!-- Phase 4's module is not in that list, and the omission is the design.

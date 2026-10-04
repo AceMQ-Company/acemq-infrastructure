@@ -1,0 +1,127 @@
+# The acemq-infra operator: a namespace, an identity, what it may touch, and one
+# elected controller. Apply crd.yaml first. docs/operator.md is the guide.
+#
+# The image is built from acemq-infra-operator/Dockerfile; no registry publishes
+# it yet, so load it into the cluster (kind load docker-image, or push it to
+# your own registry and change `image:` below).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: acemq-infra-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: acemq-infra-operator
+  namespace: acemq-infra-system
+---
+# Cluster-wide, because Cutovers are reconciled in every namespace unless
+# WATCH_NAMESPACES narrows it. Read Secrets is the sharp edge: whoever may
+# create a Cutover in a namespace can have the operator present that
+# namespace's Secrets to a management URL of their choosing. Narrow it with
+# WATCH_NAMESPACES and namespaced RoleBindings where that matters.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: acemq-infra-operator
+rules:
+  - apiGroups: ["infra.acemq.org"]
+    resources: ["cutovers"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["infra.acemq.org"]
+    resources: ["cutovers/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: acemq-infra-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: acemq-infra-operator
+subjects:
+  - kind: ServiceAccount
+    name: acemq-infra-operator
+    namespace: acemq-infra-system
+---
+# The lease that makes it one controller, in its own namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: acemq-infra-operator-leader
+  namespace: acemq-infra-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: acemq-infra-operator-leader
+  namespace: acemq-infra-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: acemq-infra-operator-leader
+subjects:
+  - kind: ServiceAccount
+    name: acemq-infra-operator
+    namespace: acemq-infra-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acemq-infra-operator
+  namespace: acemq-infra-system
+  labels:
+    app.kubernetes.io/name: acemq-infra-operator
+spec:
+  replicas: 1
+  # Never two at once by design; the lease makes it true even when the
+  # strategy would not.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: acemq-infra-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: acemq-infra-operator
+    spec:
+      serviceAccountName: acemq-infra-operator
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: operator
+          image: acemq-infra-operator:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # - name: WATCH_NAMESPACES
+            #   value: "orders,payments"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
