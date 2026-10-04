@@ -1,7 +1,9 @@
 # Scripts
 
-Two scripts, and both are here because a design document about broker cutovers
-that you cannot run anything against is a design document that drifts.
+Three scripts. The first two are here because a design document about broker
+cutovers that you cannot run anything against is a design document that drifts;
+the third because an operator nobody has killed mid-drain is one nobody should
+trust.
 
 ## `blue-green-lab.sh`
 
@@ -80,6 +82,26 @@ Beyond the schema, it enforces the four structural rules that cost messages:
 | A `mirror` names exchanges, never queues | Queue federation pulls only when the upstream has no consumers — a conditional move, not a copy |
 
 When the tool exists these rules move into it, and this script goes away.
+
+## `operator-e2e.sh`
+
+The operator ([docs/operator.md](../docs/operator.md)) end to end, on a kind
+cluster the script creates and deletes — nothing else is touched.
+
+```console
+$ ./scripts/operator-e2e.sh             # build, create, run, delete
+$ ./scripts/operator-e2e.sh --keep      # leave the cluster up to look at
+$ ./scripts/operator-e2e.sh --reuse     # run again on the cluster --keep left
+```
+
+It installs cert-manager and the RabbitMQ Cluster Operator (both pinned), makes
+two single-node `RabbitmqCluster`s, loads the operator image and a small Python
+client (`operator-e2e/`), and runs three Cutovers: a backlog on blue with a
+consumer attached, counted message by message; a completed cutover rolled back
+through `spec.action`; and the operator pod killed without grace while the drain
+runs, which must come back `Interrupted` with its journal byte-for-byte as the
+kill left it, run nothing, and then roll back. Requires docker, kind, kubectl,
+jq and Maven. CI runs it on every push.
 
 ## Where the docs site is built
 

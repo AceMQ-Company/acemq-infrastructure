@@ -10,7 +10,9 @@
 #     one that matters. A linter whose rules have quietly stopped firing passes
 #     everything, including the files that describe the mistakes it exists to
 #     catch, and looks exactly like a linter that works.
-#   * and, since phase 4, the same cutover runs against the BINARY.
+#   * and, since phase 4, the same cutover runs against the BINARY;
+#   * since phase 5, the operator runs a cutover, a rollback and a restart on a
+#     throwaway kind cluster.
 #
 # The last two run twice over, once against scripts/lint-deployment.py and once
 # against the Java validator's own suite, which is deliberate: the two
@@ -74,7 +76,7 @@ jobs:
         # `bash scripts/...` forever, and the README says `./scripts/...`.
         run: |
           fail=0
-          for f in scripts/blue-green-lab.sh scripts/lint-deployment.py; do
+          for f in scripts/blue-green-lab.sh scripts/lint-deployment.py scripts/operator-e2e.sh; do
             [ -x "$f" ] || { echo "::error::$f is not executable"; fail=1; }
           done
           exit $fail
@@ -249,6 +251,33 @@ jobs:
             **/target/failsafe-reports/**
             **/target/native/**/*.txt
           retention-days: 7
+
+  # Phase 5. The operator on a throwaway kind cluster the script creates and
+  # deletes: the RabbitMQ Cluster Operator, two RabbitmqClusters, a counted
+  # cutover, a rollback through the resource, and the operator pod killed
+  # without grace in the middle of the drain, which has to come back
+  # Interrupted with its journal untouched. The mock-server tests in the build
+  # job prove the state machine; this proves the pod, the RBAC, the lease and
+  # the ConfigMap journal on a real API server, against real brokers.
+  operator-e2e:
+    name: operator on kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - uses: helm/kind-action@v1.15.0
+        with:
+          install_only: true
+
+      - name: Cutover, rollback and restart on kind
+        run: ./scripts/operator-e2e.sh
 
   examples:
     name: configuration format

@@ -1,0 +1,81 @@
+# The deployment file every Cutover in scripts/operator-e2e.sh carries in
+# spec.deployment — the same format acemq-infra apply reads, unchanged. The
+# variables come from the default-user Secrets the RabbitMQ Cluster Operator
+# writes beside each RabbitmqCluster.
+apiVersion: acemq.org/v1alpha1
+kind: Deployment
+metadata:
+  name: e2e-orders
+
+clusters:
+  blue:
+    management: http://blue.acemq-infra-e2e.svc:15672
+    amqp: amqp://${BLUE_USERNAME}:${BLUE_PASSWORD}@blue.acemq-infra-e2e.svc:5672
+    vhost: /
+    username: ${BLUE_USERNAME}
+    password: ${BLUE_PASSWORD}
+  green:
+    management: http://green.acemq-infra-e2e.svc:15672
+    amqp: amqp://${GREEN_USERNAME}:${GREEN_PASSWORD}@green.acemq-infra-e2e.svc:5672
+    vhost: /
+    username: ${GREEN_USERNAME}
+    password: ${GREEN_PASSWORD}
+
+provider: rabbitmq
+
+# A hook rather than external: with nobody at a terminal an external switch
+# stops the run, which is right for an estate and useless for a test.
+endpoint:
+  kind: hook
+  run: /bin/true
+  args: ["{{target}}"]
+  timeout: 30s
+
+deployment:
+  operation: blueGreen
+  from: blue
+  to: green
+  semantics: atLeastOnce
+
+  backup:
+    enabled: false
+
+  steps:
+    - id: topology
+      copyTopology:
+        from: blue
+        to: green
+        vhosts: ["/"]
+        include: [exchanges, queues, bindings]
+
+    # Closed at once rather than `after: {unacked: 0}`: the e2e's consumer
+    # never stops on its own, so its in-flight deliveries are requeued on blue
+    # by the close and drained with the rest. That is the atLeastOnce cost the
+    # e2e counts.
+    - id: drain-consumers
+      closeConnections:
+        on: blue
+        select:
+          role: consumer
+      waitFor:
+        on: blue
+        unacked: 0
+        timeout: 1m
+        onTimeout: abort
+
+    - id: drain-messages
+      drain:
+        from: blue
+        to: green
+        queues: ["orders.*"]
+        ackMode: onConfirm
+        deleteAfter: queueLength
+      waitFor:
+        on: blue
+        depth: 0
+        timeout: 5m
+        onTimeout: abort
+
+    - id: switch-endpoint
+      endpoint:
+        target: green
