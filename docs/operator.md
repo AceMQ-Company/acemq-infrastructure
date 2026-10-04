@@ -16,15 +16,29 @@ the other way round.
 
 ## Install
 
-There is no published image yet. Build it, put it where your cluster can pull
-it, and apply the two manifests in `deploy/`:
+The image is on GHCR as `ghcr.io/acemq-company/acemq-infra-operator`, for
+linux/amd64 and linux/arm64, from `0.6.0` on. Both manifests are attached to
+the release, and the `operator.yaml` there names that release's image:
+
+```console
+$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.6.0/crd.yaml
+$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.6.0/operator.yaml
+```
+
+The image carries build provenance; check it before you run it:
+
+```console
+$ gh attestation verify oci://ghcr.io/acemq-company/acemq-infra-operator:0.6.0 \
+    --repo AceMQ-Company/acemq-infrastructure
+```
+
+To run a build of your own instead, build it, put it where your cluster can
+pull it, and change `image:` in `deploy/operator.yaml`:
 
 ```console
 $ mvn -B -pl acemq-infra-operator -am package -DskipTests
 $ docker build -t acemq-infra-operator:dev acemq-infra-operator
 $ kind load docker-image acemq-infra-operator:dev   # or push to your registry
-$ kubectl apply -f deploy/crd.yaml
-$ kubectl apply -f deploy/operator.yaml
 ```
 
 `deploy/operator.yaml` makes the `acemq-infra-system` namespace, a service
@@ -253,8 +267,8 @@ Deployment to reconcile only the namespaces that need it.
 
 ## What it does not do
 
-- **Publish an image.** Build it from `acemq-infra-operator/Dockerfile`. The JVM
-  image is what is tested; a native one is possible on the same toolchain and
+- **Ship a native image.** The published image runs the operator on a JVM, and
+  that is what is tested; a native one is possible on the same toolchain and
   has not been built.
 - **Keep backups.** A `backup:` step writes to the pod's disk, which goes with
   the pod. Disable it, or point a hook at somewhere durable.

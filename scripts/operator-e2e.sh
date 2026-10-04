@@ -134,7 +134,10 @@ done
 
 say "the operator"
 k apply -f "$ROOT/deploy/crd.yaml" >/dev/null
-k apply -f "$ROOT/deploy/operator.yaml" >/dev/null
+# The manifest names the published image; the run uses the one just built and
+# loaded, so nothing is pulled from GHCR.
+sed -E "s#image: ghcr.io/acemq-company/acemq-infra-operator:.*#image: $OPERATOR_IMAGE#" \
+  "$ROOT/deploy/operator.yaml" | k apply -f - >/dev/null
 [[ $REUSE == 1 ]] && k -n "$OPERATOR_NS" rollout restart deploy/acemq-infra-operator >/dev/null
 k -n "$OPERATOR_NS" rollout status deploy/acemq-infra-operator --timeout=5m
 

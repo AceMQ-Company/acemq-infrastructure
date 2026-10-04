@@ -1,9 +1,9 @@
 # The acemq-infra operator: a namespace, an identity, what it may touch, and one
 # elected controller. Apply crd.yaml first. docs/operator.md is the guide.
 #
-# The image is built from acemq-infra-operator/Dockerfile; no registry publishes
-# it yet, so load it into the cluster (kind load docker-image, or push it to
-# your own registry and change `image:` below).
+# The image is built from acemq-infra-operator/Dockerfile and published to GHCR
+# for linux/amd64 and linux/arm64 by the release workflow. The copy attached to
+# each GitHub release names that release's image.
 ---
 apiVersion: v1
 kind: Namespace
@@ -106,7 +106,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: operator
-          image: acemq-infra-operator:dev
+          image: ghcr.io/acemq-company/acemq-infra-operator:0.6.0
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAMESPACE

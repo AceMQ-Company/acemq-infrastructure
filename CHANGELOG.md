@@ -4,12 +4,12 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.4.0` is released: [phase 4](docs/roadmap.md) — the tool is a binary, and the
-suite runs against it rather than against the jar. That completes the roadmap's
-mandatory phases. [Phase 5](docs/roadmap.md), the operator, was asked for and
-is built; it is under Unreleased below.
+`0.6.0` is released: [phase 5](docs/roadmap.md), the operator, with its image
+on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-10-04
 
 ### Added
 
@@ -28,9 +28,14 @@ is built; it is under Unreleased below.
   `Failed` or `Interrupted` run through `Rollbacks.derive` and the journal, with
   the CLI's refusals, and is asked again while a forward drain is still
   running. One elected controller. The CRD is generated from the model and
-  shipped with RBAC and a Deployment in `deploy/`; the image is built from
-  `acemq-infra-operator/Dockerfile` and not yet published.
+  shipped with RBAC and a Deployment in `deploy/`.
   [The operator](docs/operator.md) has the details.
+- **The operator image on GHCR:** `ghcr.io/acemq-company/acemq-infra-operator`,
+  for linux/amd64 and linux/arm64, tagged with the version and, for a release
+  that is not a prerelease, `latest`, with build provenance. `deploy/crd.yaml`
+  and `deploy/operator.yaml` are attached to the GitHub release, the latter
+  naming that release's image. `scripts/operator-e2e.sh` still runs the image
+  it builds and pulls nothing.
 - **`Journal.Mirror`:** a second, synchronous copy of every journal write, and
   `Cli.mirroringJournalsTo` to set one. A failing first copy stops the run
   starting, as an unwritable file does. `Brokers` is public so `Cli` can be

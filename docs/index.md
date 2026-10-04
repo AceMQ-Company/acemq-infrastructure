@@ -20,7 +20,8 @@ cluster**. That is what this is for.
 > for linux-amd64, linux-arm64 and darwin-arm64 with no JVM to install, there is
 > a GitHub Action wrapping it, and the cutover suite runs against the binary
 > rather than against the jar on every push. `0.5.0` drives the rollback through
-> the binary too, from the journal `apply` keeps. See [installing it](install.md).
+> the binary too, from the journal `apply` keeps. `0.6.0` ships
+> [the operator](operator.md), with its image on GHCR. See [installing it](install.md).
 
 ## The pages
 

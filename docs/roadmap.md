@@ -179,7 +179,7 @@ where it started with the duplicate count the binary printed measured for real.
 [Blue/green](blue-green.md#running-it-the-journal-and-acemq-infra-rollback) has
 the journal format.
 
-## Phase 5 — the operator ✅ (unreleased)
+## Phase 5 — the operator ✅ (0.6.0)
 
 Asked for, and built: [the operator](operator.md). Same core library — it drives
 the CLI's own `Cli` class — and the same configuration schema, verbatim, in a
