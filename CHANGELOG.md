@@ -11,6 +11,8 @@ gets built only if somebody asks with a real estate behind the ask.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-04
+
 ### Added
 
 - **`acemq-infra rollback --journal PATH`: the rollback, driven through the

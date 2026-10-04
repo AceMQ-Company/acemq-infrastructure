@@ -16,10 +16,11 @@ cluster**. That is what this is for.
 > the consumer check that makes a canary safe. All of it is described in
 > [the library](library.md).
 >
-> [Phase 4](roadmap.md) is on `main`: `acemq-infra` is now a single executable
+> [Phase 4](roadmap.md) shipped in `0.4.0`: `acemq-infra` is a single executable
 > for linux-amd64, linux-arm64 and darwin-arm64 with no JVM to install, there is
 > a GitHub Action wrapping it, and the cutover suite runs against the binary
-> rather than against the jar on every push. See [installing it](install.md).
+> rather than against the jar on every push. `0.5.0` drives the rollback through
+> the binary too, from the journal `apply` keeps. See [installing it](install.md).
 
 ## The pages
 

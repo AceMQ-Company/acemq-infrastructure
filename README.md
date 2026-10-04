@@ -28,8 +28,9 @@ clusters**.
 > executable for linux-amd64, linux-arm64 and darwin-arm64 with no JVM to
 > install, there is a GitHub Action wrapping it, and the cutover suite runs
 > against the binary rather than against the jar — on every push, on both Linux
-> architectures, and again before a release publishes anything. See
-> [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
+> architectures, and again before a release publishes anything. `0.5.0` adds
+> `acemq-infra rollback`: `apply` keeps a journal, and the rollback runs from it
+> through the binary and the Action. See [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
 > the build order and [the library](docs/library.md) for what exists today.
 
 The five AceMQ client libraries already do the client half of a cutover — drain,
@@ -180,7 +181,7 @@ A single executable, no JVM, about 30MB, starting in roughly ten milliseconds.
 provenance checks, and the GitHub Action.
 
 ```console
-$ VERSION=0.4.0 PLATFORM=linux-amd64
+$ VERSION=0.5.0 PLATFORM=linux-amd64
 $ BASE=https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION
 $ curl -fsSLO "$BASE/acemq-infra-$VERSION-$PLATFORM" && curl -fsSLO "$BASE/SHA256SUMS"
 $ grep " acemq-infra-$VERSION-$PLATFORM$" SHA256SUMS | sha256sum -c -
@@ -190,7 +191,7 @@ $ chmod +x "acemq-infra-$VERSION-$PLATFORM" && sudo mv "acemq-infra-$VERSION-$PL
 From a pipeline, with nothing installed:
 
 ```yaml
-- uses: AceMQ-Company/acemq-infrastructure@v0.4.0
+- uses: AceMQ-Company/acemq-infrastructure@v0.5.0
   with:
     command: plan
     file: deployment.yaml
