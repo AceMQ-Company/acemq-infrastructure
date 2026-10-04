@@ -216,6 +216,32 @@ class JournalTest {
         }
     }
 
+    @Test
+    @DisplayName("copies every write to a mirror, a rollback's too, and refuses to begin without one")
+    void mirrored() throws IOException {
+        Path path = directory.resolve("journal.json");
+        List<String> copies = new java.util.ArrayList<>();
+        Journal journal = Journal.begin(path, "acemq-infra test", "orders",
+                directory.resolve("orders.yaml"), BYTES, "blue", "green", CLUSTERS, copies::add);
+        cutover(Deployments.blueGreen(), journal);
+        // The copy is the file, every time: the last one is what is on disk.
+        assertThat(copies).hasSizeGreaterThan(2);
+        assertThat(copies.get(copies.size() - 1)).isEqualTo(Files.readString(path));
+
+        int before = copies.size();
+        Journal.read(path, copies::add).rollback();
+        assertThat(copies).hasSize(before + 1);
+        assertThat(copies.get(before)).contains("\"rollback\"");
+
+        Journal.Mirror unreachable = json -> {
+            throw new IOException("the API server said no");
+        };
+        assertThatThrownBy(() -> Journal.begin(directory.resolve("other.json"), "t", "orders",
+                directory.resolve("orders.yaml"), BYTES, "blue", "green", CLUSTERS, unreachable))
+                .isInstanceOf(java.io.UncheckedIOException.class)
+                .hasMessageContaining("the API server said no");
+    }
+
     private static int indexOf(List<Step> steps, String id) {
         for (int index = 0; index < steps.size(); index++) {
             if (steps.get(index).describeId().equals(id)) {

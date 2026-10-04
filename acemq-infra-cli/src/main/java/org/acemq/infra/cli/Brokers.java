@@ -27,10 +27,11 @@ import org.acemq.infra.provider.ClusterAccess;
  * parsing, the refusals, the confirmation gate, the exit codes — a function a test can run end to
  * end without a container and without anything to break.
  *
- * <p>{@code Main} supplies {@code RabbitBroker::open} and nothing else does.
+ * <p>{@code Main} supplies {@code RabbitBroker::open}, and so does the operator, which drives this
+ * same class rather than a copy of it.
  */
 @FunctionalInterface
-interface Brokers {
+public interface Brokers {
 
     /**
      * Connects to a cluster with a client that can change it.

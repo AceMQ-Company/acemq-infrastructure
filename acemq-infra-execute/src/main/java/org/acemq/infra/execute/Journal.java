@@ -67,10 +67,38 @@ public final class Journal {
      */
     public static final int FORMAT = 1;
 
+    /**
+     * A second place every write of a journal goes, after the file and before the call that caused
+     * it returns.
+     *
+     * <p>For a process whose disk does not outlive it. The operator runs in a pod, and a journal on
+     * the pod's disk is gone with the pod at exactly the moment it is needed, so it copies every
+     * write into the cluster. Synchronous on purpose: a step is recorded as {@code started} before
+     * it does anything, and that is only worth something if the copy is made before it does
+     * anything too.
+     *
+     * <p>A mirror that throws is treated exactly as a file that cannot be written: on the first
+     * write the run does not start, and on any later one the journal is reported as broken and the
+     * run is not stopped halfway.
+     */
+    @FunctionalInterface
+    public interface Mirror {
+
+        /** No second copy, which is the CLI's case. */
+        Mirror NONE = json -> { };
+
+        /**
+         * @param json the whole journal, as it now is on disk
+         * @throws IOException when the copy could not be made
+         */
+        void write(String json) throws IOException;
+    }
+
     private static final ObjectMapper JSON =
             new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
     private final Path path;
+    private final Mirror mirror;
     private final ObjectNode root;
 
     /** Where steps are written: the root for a cutover, the {@code rollback} block for its undo. */
@@ -79,8 +107,9 @@ public final class Journal {
     /** Why a write after the first one failed, when one did. */
     private String broken;
 
-    private Journal(Path path, ObjectNode root, ObjectNode section) {
+    private Journal(Path path, Mirror mirror, ObjectNode root, ObjectNode section) {
         this.path = path;
+        this.mirror = mirror;
         this.root = root;
         this.section = section;
     }
@@ -107,6 +136,18 @@ public final class Journal {
     public static Journal begin(Path path, String tool, String deployment, Path file,
                                 byte[] fileBytes, String from, String to,
                                 Map<String, String> clusters) {
+        return begin(path, tool, deployment, file, fileBytes, from, to, clusters, Mirror.NONE);
+    }
+
+    /**
+     * Starts the journal for a cutover about to run, copying every write to {@code mirror} as well.
+     *
+     * @param mirror where else each write goes; when the first copy fails the run must not start
+     * @see #begin(Path, String, String, Path, byte[], String, String, Map)
+     */
+    public static Journal begin(Path path, String tool, String deployment, Path file,
+                                byte[] fileBytes, String from, String to,
+                                Map<String, String> clusters, Mirror mirror) {
         if (Files.exists(path)) {
             throw new IllegalStateException(path + " already exists. It is the journal of an"
                     + " earlier run and the only record of how to undo it, so it is not"
@@ -126,7 +167,7 @@ public final class Journal {
         root.put("outcome", "running");
         root.putArray("steps");
         root.putArray("movements");
-        Journal journal = new Journal(path, root, root);
+        Journal journal = new Journal(path, mirror, root, root);
         try {
             if (path.toAbsolutePath().getParent() != null) {
                 Files.createDirectories(path.toAbsolutePath().getParent());
@@ -148,6 +189,18 @@ public final class Journal {
      *     reason
      */
     public static Journal read(Path path) {
+        return read(path, Mirror.NONE);
+    }
+
+    /**
+     * Reads a journal back, copying every later write of it — a rollback's — to {@code mirror}.
+     *
+     * @param path the file {@code apply} wrote
+     * @param mirror where else each write goes
+     * @return the journal
+     * @throws IllegalArgumentException when it is not a journal this build can read
+     */
+    public static Journal read(Path path, Mirror mirror) {
         JsonNode tree;
         try {
             tree = JSON.readTree(Files.readString(path, StandardCharsets.UTF_8));
@@ -177,7 +230,7 @@ public final class Journal {
                     + " steps.");
         }
         ObjectNode root = (ObjectNode) tree;
-        return new Journal(path, root, root);
+        return new Journal(path, mirror, root, root);
     }
 
     // ---------------------------------------------------------------- what the executor records
@@ -413,7 +466,7 @@ public final class Journal {
             throw new UncheckedIOException("the journal " + path + " could not be marked as rolled"
                     + " back: " + failed.getMessage(), failed);
         }
-        return new Journal(path, root, rollback);
+        return new Journal(path, mirror, root, rollback);
     }
 
     /**
@@ -455,12 +508,19 @@ public final class Journal {
     private void write() throws IOException {
         Path absolute = path.toAbsolutePath();
         Path temporary = absolute.resolveSibling(absolute.getFileName() + ".tmp");
-        Files.writeString(temporary, JSON.writeValueAsString(root) + "\n", StandardCharsets.UTF_8);
+        String json = JSON.writeValueAsString(root) + "\n";
+        Files.writeString(temporary, json, StandardCharsets.UTF_8);
         try {
             Files.move(temporary, absolute, StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException notHere) {
             Files.move(temporary, absolute, StandardCopyOption.REPLACE_EXISTING);
+        }
+        try {
+            mirror.write(json);
+        } catch (RuntimeException failed) {
+            throw new IOException("the journal's copy could not be written: " + failed.getMessage(),
+                    failed);
         }
     }
 

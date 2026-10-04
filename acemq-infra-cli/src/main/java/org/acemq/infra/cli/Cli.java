@@ -117,6 +117,9 @@ public final class Cli {
     /** How long a guard's condition must hold; null for the executor's own default. */
     private Duration settle;
 
+    /** Where every journal write is copied as well; nowhere, for a process with a disk. */
+    private Journal.Mirror mirror = Journal.Mirror.NONE;
+
     /**
      * @param out where output goes
      * @param err where complaints about the command line go
@@ -145,6 +148,20 @@ public final class Cli {
      */
     Cli allowingForStatistics(Duration value) {
         this.settle = value;
+        return this;
+    }
+
+    /**
+     * Copies every write of the journal {@code apply} begins, or {@code rollback} reads, somewhere
+     * else as well. The operator's way in: it drives this class, so that a cutover run from a
+     * custom resource is refused, gated and recorded by the same code as one run from a shell, and
+     * its pod's disk does not outlive it.
+     *
+     * @param value where the copies go
+     * @return this
+     */
+    public Cli mirroringJournalsTo(Journal.Mirror value) {
+        this.mirror = value;
         return this;
     }
 
@@ -409,7 +426,7 @@ public final class Cli {
                         probed.file().metadata().name().orElse("(unnamed)"),
                         Path.of(options.file()), bytes(options.file()),
                         probed.source().access().name(), probed.target().access().name(),
-                        clusters(probed));
+                        clusters(probed), mirror);
                 out.println("journal: " + journalPath);
                 builder.journal(journal);
             }
@@ -480,7 +497,7 @@ public final class Cli {
     private int rollback(Options options) {
         Journal journal;
         try {
-            journal = Journal.read(Path.of(options.journal()));
+            journal = Journal.read(Path.of(options.journal()), mirror);
         } catch (IllegalArgumentException unusable) {
             err.println("acemq-infra: " + unusable.getMessage());
             return FINDINGS;
