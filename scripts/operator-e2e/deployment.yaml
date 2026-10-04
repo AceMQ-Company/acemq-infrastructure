@@ -1,7 +1,7 @@
 # The deployment file every Cutover in scripts/operator-e2e.sh carries in
 # spec.deployment — the same format acemq-infra apply reads, unchanged. The
-# variables come from the default-user Secrets the RabbitMQ Cluster Operator
-# writes beside each RabbitmqCluster.
+# variables come from labelled copies of the default-user Secrets the RabbitMQ
+# Cluster Operator writes beside each RabbitmqCluster.
 apiVersion: acemq.org/v1alpha1
 kind: Deployment
 metadata:

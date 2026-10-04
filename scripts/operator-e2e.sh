@@ -151,9 +151,17 @@ for colour in blue green; do
   k -n "$NS" wait --for=condition=AllReplicasReady "rabbitmqcluster/$colour" --timeout=10m
 done
 
-# The operator reads only Secrets labelled for it; these are the ones the
-# Cutovers below name.
-k -n "$NS" label secret blue-default-user green-default-user infra.acemq.org/credentials=true --overwrite >/dev/null
+# The operator reads only Secrets labelled for it. Not the default-user ones:
+# the Cluster Operator rewrites their labels on every reconcile, and a label
+# on the RabbitmqCluster would reach its erlang-cookie Secret as well. So the
+# Cutovers below name a copy of their own, as docs/operator.md advises.
+for colour in blue green; do
+  user=$(k -n "$NS" get secret "$colour-default-user" -o jsonpath='{.data.username}' | base64 -d)
+  pass=$(k -n "$NS" get secret "$colour-default-user" -o jsonpath='{.data.password}' | base64 -d)
+  k -n "$NS" create secret generic "$colour-cutover" --from-literal=username="$user" \
+    --from-literal=password="$pass" --dry-run=client -o yaml \
+    | k label --local -f - infra.acemq.org/credentials=true -o yaml | k apply -f - >/dev/null
+done
 
 say "the operator"
 k apply -f "$ROOT/deploy/crd.yaml" >/dev/null
@@ -204,10 +212,10 @@ metadata:
   namespace: $NS
 spec:
   variables:
-    - {name: BLUE_USERNAME, secretKeyRef: {name: blue-default-user, key: username}}
-    - {name: BLUE_PASSWORD, secretKeyRef: {name: blue-default-user, key: password}}
-    - {name: GREEN_USERNAME, secretKeyRef: {name: green-default-user, key: username}}
-    - {name: GREEN_PASSWORD, secretKeyRef: {name: green-default-user, key: password}}
+    - {name: BLUE_USERNAME, secretKeyRef: {name: blue-cutover, key: username}}
+    - {name: BLUE_PASSWORD, secretKeyRef: {name: blue-cutover, key: password}}
+    - {name: GREEN_USERNAME, secretKeyRef: {name: green-cutover, key: username}}
+    - {name: GREEN_PASSWORD, secretKeyRef: {name: green-cutover, key: password}}
 ${2:-}
   deployment: |
 EOF

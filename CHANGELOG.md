@@ -18,7 +18,12 @@ on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
   `kubectl -n <ns> label secret <name> infra.acemq.org/credentials=true`. A
   Secret is first fetched as metadata only; an unlabelled one's data is never
   requested. Before this, anyone who could create a Cutover could have the
-  operator read any Secret in that namespace.
+  operator read any Secret in that namespace. A RabbitMQ Cluster Operator
+  `<cluster>-default-user` Secret cannot carry the label — the Cluster
+  Operator rewrites its labels on every reconcile, and labelling the
+  `RabbitmqCluster` instead propagates it to the erlang-cookie Secret too — so
+  point Cutovers at a Secret of their own;
+  [Credentials](docs/operator.md#credentials) shows how.
 - **Behaviour change — credentials go only to allowlisted hosts.** Every
   cluster's `management` and `amqp` URL, after variable substitution, must
   match `ACEMQ_INFRA_ALLOWED_URLS` on the operator (comma-separated

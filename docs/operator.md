@@ -61,13 +61,13 @@ metadata:
 spec:
   variables:
     - name: BLUE_USERNAME
-      secretKeyRef: {name: blue-default-user, key: username}
+      secretKeyRef: {name: blue-cutover, key: username}
     - name: BLUE_PASSWORD
-      secretKeyRef: {name: blue-default-user, key: password}
+      secretKeyRef: {name: blue-cutover, key: password}
     - name: GREEN_USERNAME
-      secretKeyRef: {name: green-default-user, key: username}
+      secretKeyRef: {name: green-cutover, key: username}
     - name: GREEN_PASSWORD
-      secretKeyRef: {name: green-default-user, key: password}
+      secretKeyRef: {name: green-cutover, key: password}
   deployment: |
     apiVersion: acemq.org/v1alpha1
     kind: Deployment
@@ -328,15 +328,28 @@ are needed, from the Cutover's own namespace and no other, and are never
 written to the status, the plan, the fingerprint or the journal — the journal
 records management URLs with any credentials stripped, as it always has.
 
-The RabbitMQ Cluster Operator writes a `<cluster>-default-user` Secret beside
-every `RabbitmqCluster`, with `username` and `password` keys, and those are the
-natural references — once labelled for the operator (below). That is a
-convenience, not a dependency: **nothing here reads a RabbitMQ Cluster Operator
-resource.** A cluster is a management URL and a Secret, whether it is a
-`RabbitmqCluster`, a StatefulSet somebody wrote by hand, or a VM outside
-Kubernetes altogether — which keeps the second objection in
-[language and shape](shape.md), another project's resource model becoming part
-of this tool's contract, from applying.
+Keep a cluster's cutover credentials in a Secret of their own, with `username`
+and `password` keys and the label `infra.acemq.org/credentials: "true"`
+([Security](#security)) — `blue-cutover` above. The RabbitMQ Cluster Operator's
+`<cluster>-default-user` Secret is not a good one to point at directly, for two
+reasons found by running it: the Cluster Operator rewrites that Secret's labels
+whenever it reconciles, so a label added to it is gone within seconds; and the
+way to make a label stick — putting it on the `RabbitmqCluster`, which
+propagates its labels to every child — labels the `<cluster>-erlang-cookie`
+Secret as well, which no Cutover has any business reading. Copy the
+credentials, or better, give cutovers a user of their own:
+
+```console
+$ kubectl -n orders create secret generic blue-cutover \
+    --from-literal=username=... --from-literal=password=...
+$ kubectl -n orders label secret blue-cutover infra.acemq.org/credentials=true
+```
+
+**Nothing here reads a RabbitMQ Cluster Operator resource.** A cluster is a
+management URL and a Secret, whether it is a `RabbitmqCluster`, a StatefulSet
+somebody wrote by hand, or a VM outside Kubernetes altogether — which keeps
+the second objection in [language and shape](shape.md), another project's
+resource model becoming part of this tool's contract, from applying.
 
 ## Security
 
@@ -353,7 +366,7 @@ own, because RBAC can express neither:
    nothing more is read. Label the ones meant for cutovers:
 
    ```console
-   $ kubectl -n orders label secret blue-default-user green-default-user \
+   $ kubectl -n orders label secret blue-cutover green-cutover \
        infra.acemq.org/credentials=true
    ```
 
