@@ -17,7 +17,9 @@ package org.acemq.infra.execute;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -27,6 +29,7 @@ import org.acemq.infra.config.OnTimeout;
 import org.acemq.infra.config.Rollback;
 import org.acemq.infra.config.Step;
 import org.acemq.infra.config.WaitFor;
+import org.acemq.infra.provider.Inventory;
 import org.acemq.infra.yaml.Location;
 
 /**
@@ -156,6 +159,34 @@ public final class Rollbacks {
         }
 
         return Optional.empty();
+    }
+
+    /**
+     * The queues a rollback's drains carry back, by the cluster each one empties.
+     *
+     * <p>Resolved the way the executor resolves a drain — the drain's patterns against what the
+     * probe found on the cluster being read — so that a count taken from these queues is a count
+     * of what the drain-back is about to move and not of something near it.
+     *
+     * @param rollback the rollback's steps
+     * @param inventories what the probe found, by cluster name
+     * @return for each cluster a drain-back reads from, the queues it reads
+     */
+    public static Map<String, List<String>> carriedBack(List<Step> rollback,
+                                                        Map<String, Inventory> inventories) {
+        Map<String, List<String>> queues = new LinkedHashMap<>();
+        for (Step step : rollback) {
+            step.find(Action.Drain.class).ifPresent(drain -> drain.from().ifPresent(from -> {
+                Inventory inventory = inventories.get(from);
+                if (inventory != null) {
+                    queues.computeIfAbsent(from, ignored -> new ArrayList<>()).addAll(
+                            Selection.select(inventory.queues(), drain.queues(),
+                                    Inventory.Queue::name).stream()
+                                    .map(Inventory.Queue::name).toList());
+                }
+            }));
+        }
+        return queues;
     }
 
     /**

@@ -25,11 +25,16 @@ import static org.acemq.infra.nativeimage.Lab.policyNames;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.stream.Stream;
 
@@ -38,6 +43,7 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.DefaultConsumer;
 import com.rabbitmq.client.Envelope;
+import com.rabbitmq.client.GetResponse;
 
 import org.acemq.rabbitmq.admin.RabbitAdmin;
 import org.junit.jupiter.api.AfterAll;
@@ -71,17 +77,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *
  * <p>The estate is the one {@code BlueGreenCutoverIT} builds, down to the message counts, and the
  * deployment file is the same file. What differs is who carries it out and how the questions get
- * answered. Two of the assertions there cannot be made here and it is worth being exact about which
- * rather than leaving the claim vague:
+ * answered. The rollback is here too: {@code apply} writes a journal of what it did, and
+ * {@code acemq-infra rollback --journal} derives the undo from it exactly as
+ * {@code Execution.rollback()} does on the JVM, so the second half of {@code BlueGreenCutoverIT} —
+ * the drain back, the estate where it started, and the count of what was processed twice — is
+ * asserted against the binary as well. One assertion there cannot be made here:
  *
  * <ul>
- *   <li><strong>The rollback.</strong> {@code Execution.rollback()} derives the undo from the steps
- *       that actually reached done, and it is a library method with no command over it —
- *       {@code acemq-infra} has {@code validate}, {@code plan} and {@code apply} and nothing else.
- *       There is no way to ask a binary for it, so the rollback and its duplicate count stay where
- *       they are tested, in {@code BlueGreenCutoverIT} on the JVM. Adding a {@code rollback}
- *       command to make this test reach it would be phase four changing what the tool does, which
- *       is exactly what phase four is not.</li>
  *   <li><strong>The step objects.</strong> What comes back through a process boundary is the
  *       rendered report, so the steps are asserted as the lines an operator reads rather than as a
  *       list of {@code Taken}. That is a fair trade here: the rendering is what a pull request
@@ -117,6 +119,15 @@ class NativeBlueGreenCutoverIT {
 
     private static Connection blueConsumer;
     private static Connection greenConsumer;
+
+    /**
+     * How many messages the application on green holds when the rollback is called for: its
+     * prefetch, handed over and never settled. The number the rollback has to report.
+     */
+    private static final int IN_FLIGHT = 25;
+
+    /** Where apply records what it did, and what rollback reads. */
+    private static Path journal;
 
     /** What the application on green was handed, so that the verify step has something to find. */
     private static final ConcurrentLinkedQueue<String> PROCESSED_ON_GREEN =
@@ -164,6 +175,7 @@ class NativeBlueGreenCutoverIT {
         }
 
         deployment = Lab.file(work, "lab-orders.yaml", yaml());
+        journal = work.resolve("lab-orders.journal.json");
 
         eventually("blue reports a consuming connection", () -> {
             try (RabbitAdmin admin = admin(BLUE)) {
@@ -255,7 +267,8 @@ class NativeBlueGreenCutoverIT {
     @DisplayName("moves the estate to green when a person answers, and says so step by step")
     void theCutover() {
         Binary.Result done;
-        try (Binary.Session session = Binary.atATerminal("apply", "-f", deployment.toString())) {
+        try (Binary.Session session = Binary.atATerminal("apply", "-f", deployment.toString(),
+                "--journal", journal.toString())) {
             String gate = session.awaitQuestion();
             assertThat(gate).contains("about to run lab-orders");
             session.answer("yes");
@@ -328,6 +341,114 @@ class NativeBlueGreenCutoverIT {
         }
     }
 
+    // ---------------------------------------------------------------- the rollback
+
+    @Test
+    @Order(6)
+    @Timeout(600)
+    @DisplayName("rehearses the rollback from the journal, counts what it will duplicate, writes nothing")
+    void theRollbackRehearsed() {
+        Binary.Result rehearsal = Binary.run("rollback", "--journal", journal.toString(),
+                "--dry-run");
+
+        assertThat(rehearsal.status()).isZero();
+        // Derived from the steps that reached done, in reverse: the endpoint first, then the drain.
+        assertThat(rehearsal.all()).contains("switch-endpoint", "drain-back", "rehearsal");
+        assertThat(rehearsal.all().indexOf("switch-endpoint"))
+                .isLessThan(rehearsal.all().indexOf("drain-back"));
+        // The application's prefetch, read before the switch back: these are the messages that
+        // will be handed out a second time on blue.
+        assertThat(rehearsal.flat()).contains("the cost of this rollback")
+                .contains(IN_FLIGHT + " of them handed to a consumer on green");
+
+        assertThat(depth(GREEN, "orders.new")).isEqualTo(ORDERS);
+        assertThat(depth(BLUE, "orders.new")).isZero();
+    }
+
+    @Test
+    @Order(7)
+    @Timeout(1200)
+    @DisplayName("rolls the estate back to blue when a person answers")
+    void theRollback() {
+        Binary.Result done;
+        try (Binary.Session session = Binary.atATerminal("rollback", "--journal",
+                journal.toString())) {
+            String gate = session.awaitQuestion();
+            assertThat(gate).contains("about to roll back lab-orders");
+            session.answer("yes");
+
+            String watching = session.awaitQuestion();
+            assertThat(watching).contains("is anyone watching this run");
+            session.answer("yes");
+
+            // The application follows the endpoint back, and this is the moment the duplication is
+            // created rather than merely risked: everything it was handed and never settled is
+            // requeued on green now, and the drain-back is about to carry it to blue.
+            String endpoint = session.awaitQuestion();
+            assertThat(endpoint).contains("Switch the endpoint to blue");
+            applicationLeavesGreen();
+            session.answer("yes");
+
+            done = session.awaitExit(Duration.ofMinutes(15));
+        }
+
+        assertThat(done.status()).isZero();
+        assertThat(done.flat()).contains("lab-orders — cutover — completed")
+                .contains(IN_FLIGHT + " of them handed to a consumer on green");
+    }
+
+    @Test
+    @Order(8)
+    @Timeout(300)
+    @DisplayName("puts the estate back where it started, and the count it printed was the real one")
+    void theEstateIsWhereItStarted() throws Exception {
+        assertThat(depth(GREEN, "orders.new")).isZero();
+        assertThat(depth(GREEN, "orders.priority")).isZero();
+        assertThat(depth(BLUE, "orders.new")).isEqualTo(ORDERS);
+        assertThat(depth(BLUE, "orders.priority")).isEqualTo(PRIORITY);
+        assertThat(depth(BLUE, "orders.audit")).isEqualTo(ORDERS + PRIORITY);
+        // Green keeps the shape it was given: a topology copy is deliberately not inverted.
+        assertThat(names(GREEN)).contains("orders.new", "orders.priority");
+
+        List<String> delivered = new ArrayList<>();
+        try (Connection connection = Lab.connect(BLUE, BLUE.getAdminUsername(),
+                        BLUE.getAdminPassword(), "audit");
+                Channel channel = connection.createChannel()) {
+            GetResponse response;
+            while ((response = channel.basicGet("orders.new", true)) != null) {
+                delivered.add(new String(response.getBody(), StandardCharsets.UTF_8));
+            }
+        }
+        Set<String> distinct = new LinkedHashSet<>(delivered);
+        Set<String> processedTwice = new HashSet<>(PROCESSED_ON_GREEN);
+        processedTwice.retainAll(distinct);
+
+        System.out.printf("""
+
+                the cost of this rollback, read back after the binary exited
+                  %d messages seeded on blue, %d came back, %d of them distinct
+                  %d were handed to the application on green and handed out again on blue
+
+                """, ORDERS, delivered.size(), distinct.size(), processedTwice.size());
+
+        // Nothing lost, and exactly the number the binary said would be processed twice.
+        assertThat(distinct).hasSize(ORDERS);
+        assertThat(delivered).hasSize(ORDERS);
+        assertThat(processedTwice).hasSize(IN_FLIGHT);
+    }
+
+    @Test
+    @Order(9)
+    @Timeout(300)
+    @DisplayName("refuses to roll the same journal back twice")
+    void notTwice() {
+        Binary.Result again = Binary.run("rollback", "--journal", journal.toString(), "--yes");
+
+        assertThat(again.status()).isEqualTo(1);
+        assertThat(again.flat()).contains("a rollback of this journal was started");
+        assertThat(depth(GREEN, "orders.new")).isZero();
+    }
+
     // ---------------------------------------------------------------- the platform team
 
     /**
@@ -341,7 +462,7 @@ class NativeBlueGreenCutoverIT {
                 "orders-service");
         try {
             Channel channel = greenConsumer.createChannel();
-            channel.basicQos(25);
+            channel.basicQos(IN_FLIGHT);
             channel.basicConsume("orders.new", false, new DefaultConsumer(channel) {
                 @Override
                 public void handleDelivery(String tag, Envelope envelope,
@@ -355,6 +476,18 @@ class NativeBlueGreenCutoverIT {
         eventually("green reports the application that followed the endpoint",
                 () -> Lab.consumers(GREEN).stream()
                         .anyMatch(consumer -> "orders.new".equals(consumer.queue())));
+    }
+
+    /** The other half of a switch back: the application closes on green and reconnects on blue. */
+    private static void applicationLeavesGreen() {
+        assertThat(PROCESSED_ON_GREEN).hasSize(IN_FLIGHT);
+        try {
+            greenConsumer.close();
+        } catch (IOException broken) {
+            throw new IllegalStateException("the application could not leave green", broken);
+        }
+        eventually("green requeues what the application never settled",
+                () -> unackedOnGreen() == 0 && depth(GREEN, "orders.new") == ORDERS);
     }
 
     private static long unackedOnGreen() {

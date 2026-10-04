@@ -674,4 +674,221 @@ class CliTest {
             assertThat(err()).contains("the plan is refused, so nothing was run");
         }
     }
+
+    /**
+     * A cutover with something to undo and nothing to wait for: a drain and an endpoint switch,
+     * which are the two steps a rollback inverts.
+     */
+    private static final String UNDOABLE = FILE.replace("    enabled: true", "    enabled: false")
+            + """
+                  steps:
+                    - id: topology
+                      copyTopology:
+                        from: blue
+                        to: green
+                        exclude: [policies, operatorPolicies]
+                    - id: pause-producers
+                      waitFor:
+                        on: blue
+                        unacked: 0
+                        timeout: 1m
+                        onTimeout: abort
+                    - id: drain-messages
+                      drain:
+                        from: blue
+                        to: green
+                        queues: ["orders.*"]
+                    - id: switch-endpoint
+                      endpoint:
+                        target: green
+                """;
+
+    @Nested
+    @DisplayName("the journal apply leaves, and rollback from it")
+    class Rollback {
+
+        private String journal() {
+            return directory.resolve("journal.json").toString();
+        }
+
+        /** Every guard here holds at once, so nothing waits out the fifteen-second window. */
+        private Cli cli(Prober prober, Console console) {
+            return CliTest.this.cli(prober, console).allowingForStatistics(java.time.Duration.ZERO);
+        }
+
+        /** A cutover carried out, its journal written, and the output forgotten. */
+        private String cutover() throws IOException {
+            String file = write(UNDOABLE).toString();
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("apply", "-f", file, "--journal", journal())).as(() -> out() + err())
+                    .isEqualTo(Cli.OK);
+            output.reset();
+            errors.reset();
+            return file;
+        }
+
+        @Test
+        @DisplayName("needs a journal, and says which flag names it")
+        void needsAJournal() {
+            assertThat(cli.run("rollback")).isEqualTo(Cli.USAGE);
+            assertThat(err()).contains("needs --journal PATH");
+        }
+
+        @Test
+        @DisplayName("refuses --journal on the commands that carry nothing out")
+        void journalBelongsToApplyAndRollback() throws IOException {
+            String file = write(FILE).toString();
+            assertThat(cli.run("plan", "-f", file, "--journal", journal())).isEqualTo(Cli.USAGE);
+            assertThat(cli.run("validate", "-f", file, "--journal", journal()))
+                    .isEqualTo(Cli.USAGE);
+            assertThat(cli.run("apply", "-f", file, "--dry-run", "--journal", journal()))
+                    .isEqualTo(Cli.USAGE);
+            assertThat(err()).contains("--journal is an apply and rollback option",
+                    "A rehearsal carries nothing out");
+        }
+
+        @Test
+        @DisplayName("apply writes one beside the deployment file when it is not told where")
+        void theDefaultPlace() throws IOException {
+            assertThat(cli.run("apply", "-f", write(NO_GUARDS).toString(), "--yes"))
+                    .isEqualTo(Cli.OK);
+            try (var listing = Files.list(directory.resolve("journals"))) {
+                assertThat(listing.map(path -> path.getFileName().toString()))
+                        .singleElement().asString().startsWith("orders-blue-green-")
+                        .endsWith(".json");
+            }
+            assertThat(out()).contains("journal: " + directory.resolve("journals"));
+        }
+
+        @Test
+        @DisplayName("apply --dry-run writes none, because a rehearsal did nothing")
+        void noneForARehearsal() throws IOException {
+            cli.run("apply", "-f", write(NO_GUARDS).toString(), "--dry-run");
+            assertThat(directory.resolve("journals")).doesNotExist();
+        }
+
+        @Test
+        @DisplayName("apply will not overwrite a journal, and refuses before it asks")
+        void neverOverwritten() throws IOException {
+            Files.writeString(Path.of(journal()), "an earlier run");
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("apply", "-f", write(UNDOABLE).toString(), "--journal", journal()))
+                    .isEqualTo(Cli.FINDINGS);
+            assertThat(err()).contains("already exists");
+            assertThat(asked).isEmpty();
+            assertThat(opened).isEmpty();
+            assertThat(Files.readString(Path.of(journal()))).isEqualTo("an earlier run");
+        }
+
+        @Test
+        @DisplayName("apply says how to undo what it did")
+        void applySaysHow() throws IOException {
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("apply", "-f", write(UNDOABLE).toString(), "--journal", journal()))
+                    .isEqualTo(Cli.OK);
+            assertThat(out()).contains("to undo it: acemq-infra rollback --journal " + journal());
+            assertThat(Files.readString(Path.of(journal()))).contains("\"outcome\" : \"completed\"");
+        }
+
+        @Test
+        @DisplayName("undoes the cutover: the endpoint back first, then the drain the other way")
+        void undoes() throws IOException {
+            cutover();
+            List<String> before = List.copyOf(opened.get("blue").wrote);
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.OK);
+
+            assertThat(out()).contains("rollback of orders-blue-green", "switch-endpoint",
+                    "drain-back", "the cost of this rollback", "processed on both clusters",
+                    "orders-blue-green — cutover — completed");
+            // The drain-back is declared on blue, which is where the messages are going.
+            assertThat(opened.get("blue").wrote).hasSize(before.size() + 1)
+                    .last().asString().startsWith("drain:orders.new");
+            assertThat(asked).anyMatch(question -> question.contains("about to roll back"));
+        }
+
+        @Test
+        @DisplayName("--dry-run rehearses the undo, writes nothing, and leaves the journal usable")
+        void rehearses() throws IOException {
+            cutover();
+            List<String> before = written();
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal(), "--dry-run")).isEqualTo(Cli.OK);
+            assertThat(out()).contains("rehearsal", "drain-back");
+            assertThat(written()).isEqualTo(before);
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.OK);
+        }
+
+        @Test
+        @DisplayName("refuses to roll back twice")
+        void onlyOnce() throws IOException {
+            cutover();
+            cli(prober(), saying(Console.Answer.PROCEED)).run("rollback", "--journal", journal());
+            List<String> before = written();
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.FINDINGS);
+            assertThat(err()).contains("a rollback of this journal was started");
+            assertThat(written()).isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("stops at the gate like apply, and leaves the journal as it was")
+        void theGate() throws IOException {
+            cutover();
+            String journal = Files.readString(Path.of(journal()));
+            assertThat(cli(prober(), saying(Console.Answer.STOP))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.FINDINGS);
+            assertThat(Files.readString(Path.of(journal()))).isEqualTo(journal);
+        }
+
+        @Test
+        @DisplayName("a rollback refused before its first write can be run again")
+        void refusedIsNotRolledBack() throws IOException {
+            cutover();
+            // A pipeline: --yes, nobody watching, and an external switch back. The executor
+            // refuses in preflight, so nothing was written and the journal must stay usable.
+            assertThat(cli(prober(), nobodyWatching())
+                    .run("rollback", "--journal", journal(), "--yes")).isEqualTo(Cli.FINDINGS);
+            assertThat(out()).contains("cutover — refused");
+            assertThat(Files.readString(Path.of(journal()))).doesNotContain("\"rollback\"");
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.OK);
+            assertThat(out()).contains("marked rolled back (completed)");
+        }
+
+        @Test
+        @DisplayName("refuses a journal written from a different file")
+        void anotherFile() throws IOException {
+            String file = cutover();
+            Files.writeString(Path.of(file), UNDOABLE.replace("orders.*", "orders.new"));
+            List<String> before = written();
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.FINDINGS);
+            assertThat(err()).contains("not the one this journal was written from");
+            assertThat(written()).isEqualTo(before);
+        }
+
+        @Test
+        @DisplayName("refuses a journal in a format newer than it reads")
+        void aNewerFormat() throws IOException {
+            cutover();
+            Path path = Path.of(journal());
+            Files.writeString(path, Files.readString(path).replace("\"format\" : 1",
+                    "\"format\" : 99"));
+            assertThat(cli(prober(), saying(Console.Answer.PROCEED))
+                    .run("rollback", "--journal", journal())).isEqualTo(Cli.FINDINGS);
+            assertThat(err()).contains("journal format 99", "newer acemq-infra");
+        }
+
+        @Test
+        @DisplayName("has nothing to do for a cutover that moved nothing, and says so")
+        void nothingToUndo() throws IOException {
+            assertThat(cli.run("apply", "-f", write(NO_GUARDS).toString(), "--yes", "--journal",
+                    journal())).isEqualTo(Cli.OK);
+            output.reset();
+            assertThat(cli.run("rollback", "--journal", journal())).isEqualTo(Cli.OK);
+            assertThat(out()).contains("nothing that run did needs undoing");
+        }
+    }
 }

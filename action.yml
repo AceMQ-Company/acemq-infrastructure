@@ -21,8 +21,13 @@
 # preflight, before the first write, because an external switch waits for a
 # human by definition. Give such a file an `endpoint: kind: hook` if a pipeline
 # is meant to run it end to end.
+#
+# Undoing an apply is `command: rollback` with the journal that apply wrote. The
+# apply step's `journal` output says where that is; a rollback in a later job or
+# a later workflow needs the file carried there, with actions/upload-artifact or
+# by committing it, because a runner's disk does not outlive the job.
 name: AceMQ infrastructure
-description: Plan or apply a broker cutover with acemq-infra, without installing anything.
+description: Plan, apply or roll back a broker cutover with acemq-infra, without installing anything.
 
 branding:
   icon: shuffle
@@ -30,11 +35,20 @@ branding:
 
 inputs:
   command:
-    description: 'validate, plan or apply.'
+    description: 'validate, plan, apply or rollback.'
     required: true
   file:
-    description: 'The deployment file to read.'
-    required: true
+    description: >-
+      The deployment file to read. Required for validate, plan and apply; rollback reads the file
+      the journal names when this is empty.
+    required: false
+    default: ''
+  journal:
+    description: >-
+      apply: where to record what the run did, which is --journal; empty means journals/ beside the
+      deployment file. rollback: the journal to undo, which is required.
+    required: false
+    default: ''
   version:
     description: >-
       Which release to run, without the leading v. Defaults to the ref this action was used at, so
@@ -43,7 +57,7 @@ inputs:
     required: false
     default: ''
   dry-run:
-    description: 'apply only: re-probe both clusters and rehearse every step, writing nothing.'
+    description: 'apply or rollback: re-probe both clusters and rehearse every step, writing nothing.'
     required: false
     default: 'false'
   # Spelled out rather than `yes:`, which would have matched the flag exactly and
@@ -54,8 +68,8 @@ inputs:
   # and --assume-yes is the same word every package manager uses for it.
   assume-yes:
     description: >-
-      apply only: consent to the run starting, which is what --yes does. It does not answer any
-      question the run asks afterwards.
+      apply or rollback: consent to the run starting, which is what --yes does. It does not answer
+      any question the run asks afterwards.
     required: false
     default: 'false'
   require-variables:
@@ -93,6 +107,11 @@ outputs:
   output-file:
     description: 'A file holding everything the tool printed, for a later step to read.'
     value: ${{ steps.run.outputs.output-file }}
+  journal:
+    description: >-
+      The journal: for apply, where it recorded what it did, which is what a later rollback needs;
+      for rollback, the one it read. Empty when apply wrote none, as a dry run does not.
+    value: ${{ steps.run.outputs.journal }}
 
 runs:
   using: composite
@@ -206,6 +225,7 @@ runs:
         BINARY: ${{ steps.download.outputs.binary }}
         COMMAND: ${{ inputs.command }}
         FILE: ${{ inputs.file }}
+        JOURNAL: ${{ inputs.journal }}
         DRY_RUN: ${{ inputs.dry-run }}
         ASSUME_YES: ${{ inputs.assume-yes }}
         REQUIRE_VARIABLES: ${{ inputs.require-variables }}
@@ -215,9 +235,20 @@ runs:
         set -uo pipefail
 
         case "$COMMAND" in
-          validate|plan|apply) ;;
+          validate|plan|apply)
+            if [ -z "$FILE" ]; then
+              echo "::error::$COMMAND needs file: the deployment file to read."
+              exit 1
+            fi
+            ;;
+          rollback)
+            if [ -z "$JOURNAL" ]; then
+              echo "::error::rollback needs journal: the file the apply it undoes wrote."
+              exit 1
+            fi
+            ;;
           *)
-            echo "::error::command must be validate, plan or apply, not '$COMMAND'."
+            echo "::error::command must be validate, plan, apply or rollback, not '$COMMAND'."
             exit 1
             ;;
         esac
@@ -227,7 +258,9 @@ runs:
         # step with -e, and a trailing `a && b` whose test is false makes the
         # whole statement return 1, which ends the step. A pipeline that silently
         # stopped whenever dry-run was off would be an interesting bug to find.
-        argv=("$COMMAND" -f "$FILE")
+        argv=("$COMMAND")
+        if [ -n "$FILE" ]; then argv+=(-f "$FILE"); fi
+        if [ -n "$JOURNAL" ]; then argv+=(--journal "$JOURNAL"); fi
         if [ "$DRY_RUN" = "true" ]; then argv+=(--dry-run); fi
         if [ "$ASSUME_YES" = "true" ]; then argv+=(--yes); fi
         if [ "$REQUIRE_VARIABLES" = "true" ]; then argv+=(--require-variables); fi
@@ -244,9 +277,17 @@ runs:
         status=${PIPESTATUS[0]}
         set -e
 
+        # The binary prints the journal's path on a line of its own before the
+        # first step, so this is the path it actually wrote, default or not.
+        journal="$JOURNAL"
+        if [ "$COMMAND" = "apply" ]; then
+          journal=$(sed -n 's/^journal: //p' "$output" | head -n 1)
+        fi
+
         {
           echo "exit-code=$status"
           echo "output-file=$output"
+          echo "journal=$journal"
         } >> "$GITHUB_OUTPUT"
 
         if [ "$SUMMARY" = "true" ]; then
@@ -254,7 +295,7 @@ runs:
           # read before agreeing to something. A job summary is where a reviewer
           # will actually see it; a fold in the log is where it goes to die.
           {
-            echo "### acemq-infra $COMMAND — \`$FILE\`"
+            echo "### acemq-infra $COMMAND — \`${FILE:-$JOURNAL}\`"
             echo
             echo '```'
             cat "$output"

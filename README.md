@@ -9,7 +9,7 @@
 Blue/green and canary cutovers for message brokers — the part that **moves
 clusters**.
 
-> **Status: `validate`, `plan` and `apply` work against real RabbitMQ
+> **Status: `validate`, `plan`, `apply` and `rollback` work against real RabbitMQ
 > clusters.** [Milestone one](docs/roadmap.md) — the configuration model, the
 > validator, `probe()`, the default step list and the planner — was released as
 > `0.1.0` and writes nothing to a broker. [Phase 2](docs/roadmap.md) shipped in
@@ -104,6 +104,14 @@ rehearses every step against them — reading the topology, listing the
 connections, measuring the queues — so each guard reports what its condition is
 *at this moment* rather than what it will wait for. It cannot write: the brokers
 a rehearsal is handed throw on every verb that would.
+
+Every `apply` leaves a journal of what it did, written after each step, and
+`acemq-infra rollback --journal PATH` undoes that run from it: the steps that
+reached done, in reverse, with the drain run the other way. It rehearses the
+undo first, says how many messages it will hand out a second time, and asks
+the way `apply` asks. It refuses a journal from another file or other clusters,
+and refuses to roll the same journal back twice. [Blue/green](docs/blue-green.md)
+has the details and the journal format.
 
 ## The decisions
 

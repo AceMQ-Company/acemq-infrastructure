@@ -172,7 +172,10 @@ public final class Executor {
                         Execution.Status.NOT_REACHED, List.of("the run had already stopped")));
                 continue;
             }
-            Verdict verdict = step(entry.getKey(), entry.getValue());
+            int index = run.steps().indexOf(entry.getKey());
+            run.journal().ifPresent(journal ->
+                    journal.starting(entry.getValue(), index, entry.getKey().describeId()));
+            Verdict verdict = step(entry.getKey(), entry.getValue(), index);
             if (verdict != Verdict.CARRY_ON) {
                 stopped = true;
                 outcome = verdict == Verdict.STOP
@@ -206,6 +209,7 @@ public final class Executor {
         if (!rollback.isEmpty()) {
             notes.addAll(Rollbacks.notes(completed, run.from().name()));
         }
+        run.journal().ifPresent(journal -> journal.finish(outcome));
         return new Execution(run.file().metadata().name().orElse("(unnamed)"), run.mode(), outcome,
                 taken, notes, outstanding, rollback);
     }
@@ -547,10 +551,10 @@ public final class Executor {
             }
             long bytes = topology.writeTo(path, redact);
             lines.add(bytes + " bytes, " + topology.describe());
-            taken.add(new Execution.Taken(number, "backup", Execution.Status.DONE, lines));
+            took(new Execution.Taken(number, "backup", Execution.Status.DONE, lines), -1);
         } catch (IOException | RuntimeException failed) {
             lines.add("could not be written: " + failed.getMessage());
-            taken.add(new Execution.Taken(number, "backup", Execution.Status.FAILED, lines));
+            took(new Execution.Taken(number, "backup", Execution.Status.FAILED, lines), -1);
             // Deliberately not fatal on its own. The caller decides: go() only stops for a step
             // that returns something other than CARRY_ON, and the backup is numbered outside that
             // loop. A cutover whose backup failed is a cutover somebody should stop, so the note
@@ -564,7 +568,13 @@ public final class Executor {
 
     // ---------------------------------------------------------------- one step
 
-    private Verdict step(Step step, int number) {
+    /** A step's outcome, kept for the report and recorded in the journal. */
+    private void took(Execution.Taken step, int index) {
+        taken.add(step);
+        run.journal().ifPresent(journal -> journal.taken(index, step));
+    }
+
+    private Verdict step(Step step, int number, int index) {
         List<String> lines = new ArrayList<>();
         Verdict verdict = Verdict.CARRY_ON;
         declared = null;
@@ -592,8 +602,8 @@ public final class Executor {
             }
         } catch (RuntimeException failure) {
             lines.add("failed: " + failure.getMessage());
-            taken.add(new Execution.Taken(number, step.describeId(), Execution.Status.FAILED,
-                    lines));
+            took(new Execution.Taken(number, step.describeId(), Execution.Status.FAILED, lines),
+                    index);
             return Verdict.ABORT;
         }
 
@@ -602,7 +612,7 @@ public final class Executor {
                     ? Execution.Status.REHEARSED : Execution.Status.DONE;
             case ABORT, STOP -> Execution.Status.FAILED;
         };
-        taken.add(new Execution.Taken(number, step.describeId(), status, lines));
+        took(new Execution.Taken(number, step.describeId(), status, lines), index);
         if (status == Execution.Status.DONE) {
             completed.add(step);
             // A movement that has torn itself down is not something an abort further along has to
@@ -784,6 +794,7 @@ public final class Executor {
                 run.side(writing).orElseThrow().amqpUri(), queues,
                 drain.ackMode().orElse("onConfirm"), drain.deleteAfter().orElse("queueLength")));
         outstanding.add(movement);
+        run.journal().ifPresent(journal -> journal.declared(movement));
         declared = movement;
         lines.add("declared " + movement.describe());
         return Verdict.CARRY_ON;

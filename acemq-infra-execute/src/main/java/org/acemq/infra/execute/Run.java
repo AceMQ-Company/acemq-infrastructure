@@ -96,6 +96,7 @@ public final class Run {
     private final Console console;
     private final Timing timing;
     private final Duration settle;
+    private final Journal journal;
     private final Map<String, Side> sides = new LinkedHashMap<>();
 
     private Run(Builder builder, Mode mode) {
@@ -106,12 +107,26 @@ public final class Run {
         this.console = builder.console;
         this.timing = builder.timing;
         this.settle = builder.settle;
+        // A rehearsal did nothing, so it has nothing to record, and a journal of one would be a
+        // file a later rollback could be pointed at.
+        this.journal = mode == Mode.EXECUTE ? builder.journal : null;
         this.steps = builder.steps != null ? List.copyOf(builder.steps) : defaultSteps(builder.file);
         sides.put(from.name(), from);
         sides.put(to.name(), to);
     }
 
     private static List<Step> defaultSteps(DeploymentFile file) {
+        return stepsOf(file);
+    }
+
+    /**
+     * The steps a cutover of this file runs: the file's own, or the default list for its
+     * operation. Public because {@code rollback} has to number them exactly as the run did.
+     *
+     * @param file the deployment file
+     * @return the steps, in order
+     */
+    public static List<Step> stepsOf(DeploymentFile file) {
         Deployment deployment = file.deployment().orElseThrow(() -> new IllegalArgumentException(
                 "a file with no deployment: block cannot be executed. Validate it first."));
         // The same list the plan printed, from the same place, rather than a second copy the
@@ -161,6 +176,11 @@ public final class Run {
         return console;
     }
 
+    /** Where each step is recorded as it happens, for a cutover that was given one. */
+    public Optional<Journal> journal() {
+        return Optional.ofNullable(journal);
+    }
+
     /** The clock and the wait. */
     public Timing timing() {
         return timing;
@@ -191,6 +211,7 @@ public final class Run {
         private Console console = Console.unattended(line -> { });
         private Timing timing = Timing.real();
         private Duration settle = Guards.SETTLE;
+        private Journal journal;
 
         private Builder(DeploymentFile file) {
             this.file = file;
@@ -226,6 +247,18 @@ public final class Run {
          */
         public Builder steps(List<Step> list) {
             this.steps = list;
+            return this;
+        }
+
+        /**
+         * Where to record each step as it happens, so that what this run did can be undone by a
+         * process that did not run it. Ignored by a rehearsal, which does nothing to record.
+         *
+         * @param value the journal, already begun
+         * @return this builder
+         */
+        public Builder journal(Journal value) {
+            this.journal = value;
             return this;
         }
 

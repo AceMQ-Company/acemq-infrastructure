@@ -11,6 +11,32 @@ gets built only if somebody asks with a real estate behind the ask.
 
 ## [Unreleased]
 
+### Added
+
+- **`acemq-infra rollback --journal PATH`: the rollback, driven through the
+  binary.** Phase 4 left one thing undone and said so: `Execution.rollback()`
+  derives the undo from the steps that reached done, and there was no command
+  over it, so a cutover run by the binary or the Action could not be rolled back
+  without writing Java. Now `apply` writes a **journal** — versioned JSON,
+  `journals/<name>-<timestamp>.json` beside the deployment file unless
+  `--journal` says where, created before the first write, rewritten atomically
+  after every step, never overwritten — and `rollback` derives the undo from it
+  exactly as the JVM path does. It re-probes both clusters, rehearses the undo
+  through the same writing-verbs-throw decorator `--dry-run` uses, prints it
+  with what it will process twice (the messages a consumer on the target holds
+  unsettled, which `BlueGreenCutoverIT` counts on the JVM), and asks as `apply`
+  asks. `--dry-run` stops after the rehearsal. It refuses a journal from a
+  changed deployment file or other clusters, a newer journal format, a journal
+  already rolled back, and a cutover drain that is still running. A journal a
+  crash left `running` counts the interrupted step as having happened.
+  [Blue/green](docs/blue-green.md) has the format.
+- **The Action has a `rollback` command** and a `journal` input and output.
+- **`acemq-infra-native` runs the rollback against the binary**: the blue/green
+  cutover, then a rehearsed rollback, then the rollback typed at a terminal,
+  with the estate asserted back where it started, the duplicate count the
+  binary printed checked against what the application was really handed, and a
+  second rollback of the same journal refused.
+
 ### Security
 
 - **Jackson 2.18.9 → 2.22.3**, imported as `jackson-bom` the way

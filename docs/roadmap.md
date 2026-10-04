@@ -161,13 +161,23 @@ Three things turned out differently from what this page and that one assumed:
   makes the native test a gate. On GraalVM for JDK 25 it is deprecated and inert,
   because a fallback image is no longer something `native-image` can produce.
 
-And one thing could not be done honestly: **the rollback is not driven through
-the binary.** `Execution.rollback()` derives the undo from the steps that
-actually reached done, and there is no `rollback` command over it — the CLI has
-`validate`, `plan` and `apply` and nothing else. So the rollback, and the count
-of what it duplicated, stay tested on the JVM in `BlueGreenCutoverIT`. Adding a
-command to close that gap would be this phase changing what the tool does, which
-is the one thing it is not for.
+One thing could not be done honestly at the time: **the rollback was not driven
+through the binary.** `Execution.rollback()` derives the undo from the steps that
+actually reached done, and there was no command over it — the CLI had
+`validate`, `plan` and `apply` and nothing else — so the rollback and the count
+of what it duplicated stayed tested on the JVM in `BlueGreenCutoverIT`.
+
+**That gap is closed, and the rollback is now driven through the binary.**
+`apply` writes a journal of what it did, step by step and atomically, and
+`acemq-infra rollback --journal PATH` derives the undo from it the same way
+`Execution.rollback()` does: it re-probes both clusters, rehearses the undo,
+reports what it will process twice, asks as `apply` asks, and refuses a journal
+from another plan, a newer journal format, and a second rollback of the same
+journal. The Action has a `rollback` command. `acemq-infra-native` now runs the
+cutover *and* the rollback against the binary, and asserts the estate is back
+where it started with the duplicate count the binary printed measured for real.
+[Blue/green](blue-green.md#running-it-the-journal-and-acemq-infra-rollback) has
+the journal format.
 
 ## Phase 5 — the operator, conditionally
 

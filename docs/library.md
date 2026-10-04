@@ -23,7 +23,7 @@ acemq-infra-parent          the reactor
 ├── acemq-infra-core        the deployment file, what is wrong with it, and the plan
 ├── acemq-infra-rabbitmq    probe(), over acemq-java-rabbitmq-admin — reads, only
 ├── acemq-infra-execute     the executor, and the eight verbs that write
-├── acemq-infra-cli         acemq-infra validate | plan | apply
+├── acemq-infra-cli         acemq-infra validate | plan | apply | rollback
 └── acemq-infra-native      the binary, and the suite that runs against it (-Pnative)
 ```
 

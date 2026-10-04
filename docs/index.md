@@ -7,7 +7,7 @@ They drain, they pause, they shut down gracefully, and they do it the same way
 in Java, Go, .NET, Python and Ruby. What none of them can do is **move the
 cluster**. That is what this is for.
 
-> **Status: `validate`, `plan` and `apply` work against real RabbitMQ
+> **Status: `validate`, `plan`, `apply` and `rollback` work against real RabbitMQ
 > clusters, and there is a binary to run them with.** [Milestone one](roadmap.md)
 > — the configuration model, the validator, `probe()`, the default step list and
 > the planner — was released as `0.1.0`, and neither of its two commands writes

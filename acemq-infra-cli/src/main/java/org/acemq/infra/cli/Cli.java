@@ -15,10 +15,20 @@
  */
 package org.acemq.infra.cli;
 
+import java.io.IOException;
 import java.io.PrintStream;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 import org.acemq.infra.config.Cluster;
@@ -27,14 +37,19 @@ import org.acemq.infra.config.Deployment;
 import org.acemq.infra.config.DeploymentFile;
 import org.acemq.infra.config.DeploymentFiles;
 import org.acemq.infra.config.Environment;
+import org.acemq.infra.config.Step;
 import org.acemq.infra.execute.Broker;
 import org.acemq.infra.execute.Console;
 import org.acemq.infra.execute.Execution;
 import org.acemq.infra.execute.Executor;
+import org.acemq.infra.execute.Journal;
+import org.acemq.infra.execute.Observation;
+import org.acemq.infra.execute.Rollbacks;
 import org.acemq.infra.execute.Run;
 import org.acemq.infra.plan.Plan;
 import org.acemq.infra.plan.Planner;
 import org.acemq.infra.provider.ClusterAccess;
+import org.acemq.infra.provider.Inventory;
 import org.acemq.infra.provider.ProbedCluster;
 import org.acemq.infra.provider.Prober;
 import org.acemq.infra.validate.Finding;
@@ -42,7 +57,7 @@ import org.acemq.infra.validate.ValidationReport;
 import org.acemq.infra.validate.Validator;
 
 /**
- * {@code acemq-infra validate}, {@code plan} and {@code apply}, and nothing else.
+ * {@code acemq-infra validate}, {@code plan}, {@code apply} and {@code rollback}, and nothing else.
  *
  * <p>Phase 1 stopped at the first two, because the whole of that milestone was that nothing here
  * could write to a broker. Phase 2 adds the third, and the shape of it follows from the fact that
@@ -99,6 +114,9 @@ public final class Cli {
     private final Brokers brokers;
     private final Console console;
 
+    /** How long a guard's condition must hold; null for the executor's own default. */
+    private Duration settle;
+
     /**
      * @param out where output goes
      * @param err where complaints about the command line go
@@ -116,6 +134,18 @@ public final class Cli {
         this.prober = prober;
         this.brokers = brokers;
         this.console = console;
+    }
+
+    /**
+     * Shortens the window a guard's condition must hold for, which only a test has a reason to do:
+     * the default is fifteen seconds of wall clock per guard, and a rollback always has one.
+     *
+     * @param value the window
+     * @return this
+     */
+    Cli allowingForStatistics(Duration value) {
+        this.settle = value;
+        return this;
     }
 
     /**
@@ -151,7 +181,8 @@ public final class Cli {
 
         switch (command) {
             case "validate":
-                return misplaced(options, "validate") ? USAGE : validate(options);
+                return !needsFile(options, "validate") || misplaced(options, "validate") ? USAGE
+                        : validate(options);
             case "plan":
                 if (options.requireVariables()) {
                     // The flag exists to make validate behave as plan already does. Accepting it
@@ -160,9 +191,13 @@ public final class Cli {
                             + " always requires them: it is about to authenticate.");
                     return USAGE;
                 }
-                return misplaced(options, "plan") ? USAGE : plan(options);
+                return !needsFile(options, "plan") || misplaced(options, "plan") ? USAGE
+                        : plan(options);
             case "apply":
-                return applyOptions(options) ? apply(options) : USAGE;
+                return needsFile(options, "apply") && applyOptions(options) ? apply(options)
+                        : USAGE;
+            case "rollback":
+                return rollbackOptions(options) ? rollback(options) : USAGE;
             default:
                 err.println("acemq-infra: there is no '" + command + "' command.");
                 usage(err);
@@ -179,6 +214,11 @@ public final class Cli {
      * command that accepted them quietly would be a command somebody believes they have dry-run.
      */
     private boolean misplaced(Options options, String command) {
+        if (options.journal() != null) {
+            err.println("acemq-infra: --journal is an apply and rollback option. " + command
+                    + " carries nothing out, so there is nothing to record.");
+            return true;
+        }
         if (options.dryRun()) {
             err.println("acemq-infra: --dry-run is an apply option. " + command + " writes nothing"
                     + " to either broker, so there is no wet run for it to be the dry one of.");
@@ -190,6 +230,36 @@ public final class Cli {
             return true;
         }
         return false;
+    }
+
+    /** Whether the command was told which deployment file to read. */
+    private boolean needsFile(Options options, String command) {
+        if (options.file() == null) {
+            err.println("acemq-infra: which file? " + command + " needs -f deployment.yaml.");
+            usage(err);
+            return false;
+        }
+        return true;
+    }
+
+    /** Whether {@code rollback}'s command line makes sense. */
+    private boolean rollbackOptions(Options options) {
+        if (options.journal() == null) {
+            err.println("acemq-infra: which journal? rollback undoes what one apply recorded, and"
+                    + " needs --journal PATH: the file that apply named when it started.");
+            return false;
+        }
+        if (options.requireVariables()) {
+            err.println("acemq-infra: --require-variables is a validate option. rollback always"
+                    + " requires them: it is about to authenticate.");
+            return false;
+        }
+        if (options.dryRun() && options.yes()) {
+            err.println("acemq-infra: --yes and --dry-run together. A dry run writes nothing, so"
+                    + " there is nothing to agree to — drop one of them and say which you meant.");
+            return false;
+        }
+        return true;
     }
 
     /** Whether {@code apply}'s command line makes sense. */
@@ -205,6 +275,11 @@ public final class Cli {
             // Guessing which would be guessing whether they meant to write to a broker.
             err.println("acemq-infra: --yes and --dry-run together. A dry run writes nothing, so"
                     + " there is nothing to agree to — drop one of them and say which you meant.");
+            return false;
+        }
+        if (options.dryRun() && options.journal() != null) {
+            err.println("acemq-infra: --journal and --dry-run together. A rehearsal carries nothing"
+                    + " out, so it writes no journal: there would be nothing in it to roll back.");
             return false;
         }
         return true;
@@ -294,11 +369,25 @@ public final class Cli {
             err.println("acemq-infra: the plan is refused, so nothing was run.");
             return FINDINGS;
         }
+        Path journalPath = options.dryRun() ? null
+                : options.journal() != null ? Path.of(options.journal())
+                : defaultJournal(Path.of(options.file()), probed.file());
         if (!options.dryRun()) {
+            // Refused before the question rather than after it, so that nobody types yes to a run
+            // that is then not started.
+            if (Files.exists(journalPath)) {
+                err.println("acemq-infra: " + journalPath + " already exists. It is the journal of"
+                        + " an earlier run and the only record of how to undo it, so it is not"
+                        + " overwritten: pass --journal with a new path. Nothing was written.");
+                return FINDINGS;
+            }
             // Printed before the question and not after it: the gate is worth nothing if what is
             // being agreed to is off the top of the screen.
             out.print(plan.render());
-            if (!confirmed(probed, options)) {
+            String name = probed.file().metadata().name().orElse("this deployment");
+            if (!confirmed(name, "acemq-infra: about to run " + name + ". Messages leave "
+                    + probed.source().access().name() + " — after the drain the rollback for them"
+                    + " is a second cutover in the other direction, not a switch back.", options)) {
                 return FINDINGS;
             }
         }
@@ -309,12 +398,36 @@ public final class Cli {
                     .from(probed.source().side(from))
                     .to(probed.target().side(to))
                     .console(console);
+            if (settle != null) {
+                builder.allowingForStatistics(settle);
+            }
+            Journal journal = null;
+            if (journalPath != null) {
+                // Begun before the first step and on disk before anything is written to a broker,
+                // so that a run whose journal cannot be written is a run that does not start.
+                journal = Journal.begin(journalPath, "acemq-infra " + version(),
+                        probed.file().metadata().name().orElse("(unnamed)"),
+                        Path.of(options.file()), bytes(options.file()),
+                        probed.source().access().name(), probed.target().access().name(),
+                        clusters(probed));
+                out.println("journal: " + journalPath);
+                builder.journal(journal);
+            }
             // Two terminal methods with two different names rather than a flag, which is Run's own
             // design and the reason this line is the only place in the CLI that decides. A boolean
             // threaded through here would be one `!` away from a cutover somebody asked to rehearse.
             Execution execution = Executor.execute(
                     options.dryRun() ? builder.rehearsal() : builder.cutover());
             out.print(execution.render());
+            if (journal != null) {
+                journal.broken().ifPresent(why -> err.println("acemq-infra: the journal stopped"
+                        + " being updated partway through this run (" + why + "), so it does not"
+                        + " describe all of it. Read " + journalPath + " before rolling back from"
+                        + " it."));
+                if (!execution.rollback().isEmpty()) {
+                    out.println("to undo it: acemq-infra rollback --journal " + journalPath);
+                }
+            }
             return execution.ok() ? OK : FINDINGS;
         } catch (RuntimeException unreachable) {
             // A connection that could not be opened at all, which is the one failure that happens
@@ -325,12 +438,217 @@ public final class Cli {
     }
 
     /**
+     * Where a journal goes when {@code --journal} does not say: a {@code journals} directory beside
+     * the deployment file, which is the one place both an operator and a pipeline will look for it
+     * later, named for the deployment and the moment so that no two runs share one.
+     */
+    private static Path defaultJournal(Path path, DeploymentFile file) {
+        Path beside = path.toAbsolutePath().getParent();
+        return beside.resolve("journals").resolve(file.metadata().name().orElse("deployment") + "-"
+                + DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC)
+                        .format(Instant.now()) + ".json");
+    }
+
+    /** The two clusters' management URLs, by name, for the journal to notice a different estate. */
+    private static Map<String, String> clusters(Probed probed) {
+        Map<String, String> clusters = new LinkedHashMap<>();
+        for (Side side : List.of(probed.source(), probed.target())) {
+            clusters.put(side.access().name(), side.access().redactedManagement());
+        }
+        return clusters;
+    }
+
+    private static byte[] bytes(String path) {
+        try {
+            return Files.readAllBytes(Path.of(path));
+        } catch (IOException unreadable) {
+            throw new UncheckedIOException(unreadable);
+        }
+    }
+
+    // ---------------------------------------------------------------- rollback
+
+    /**
+     * Undoes what one {@code apply} recorded.
+     *
+     * <p>The same derivation {@link Execution#rollback()} makes in the process that ran the
+     * cutover — the steps that reached done, in reverse, through {@link Rollbacks} — made instead
+     * from the journal that process left behind. Everything in front of it is refusal: a journal
+     * from another file or other clusters, one already rolled back, and a drain from the cutover
+     * still running, which a drain-back started now would chase in a circle.
+     */
+    private int rollback(Options options) {
+        Journal journal;
+        try {
+            journal = Journal.read(Path.of(options.journal()));
+        } catch (IllegalArgumentException unusable) {
+            err.println("acemq-infra: " + unusable.getMessage());
+            return FINDINGS;
+        }
+        Optional<String> already = journal.rolledBack();
+        if (already.isPresent()) {
+            err.println("acemq-infra: " + already.get() + ". A rollback is a second cutover in the"
+                    + " other direction, and running it twice would move the estate back where the"
+                    + " first one took it from. Refused; nothing was written.");
+            return FINDINGS;
+        }
+
+        Options resolved = options.file() != null ? options : options.reading(journal.file());
+        Ready ready = probe(resolved);
+        if (ready.probed().isEmpty()) {
+            return ready.code();
+        }
+        Probed probed = ready.probed().get();
+        String from = probed.source().access().name();
+        String to = probed.target().access().name();
+        Optional<String> mismatch = journal.mismatch(bytes(resolved.file()), from, to,
+                clusters(probed));
+        if (mismatch.isPresent()) {
+            err.println("acemq-infra: " + journal.path() + " does not belong to this deployment: "
+                    + mismatch.get() + " Refused; nothing was written.");
+            return FINDINGS;
+        }
+        List<Step> completed;
+        try {
+            completed = journal.completed(Run.stepsOf(probed.file()));
+        } catch (IllegalArgumentException wrong) {
+            err.println("acemq-infra: " + wrong.getMessage() + " Refused; nothing was written.");
+            return FINDINGS;
+        }
+        List<Step> undo = Rollbacks.derive(probed.file(), completed, from, to);
+
+        out.println("rollback of " + journal.deployment() + " — the cutover " + from + " → " + to
+                + " ended " + journal.outcome() + " with " + completed.size() + " step"
+                + (completed.size() == 1 ? "" : "s") + " done; undoing them is " + undo.size()
+                + " step" + (undo.size() == 1 ? "" : "s") + ". Journal: " + journal.path());
+        List<String> interrupted = journal.interrupted();
+        if (!interrupted.isEmpty()) {
+            out.println("  the cutover never recorded how it ended: the process stopped during "
+                    + String.join(", ", interrupted) + ", which is counted as having happened.");
+        }
+        if (undo.isEmpty()) {
+            out.println("nothing that run did needs undoing: no message and no client moved."
+                    + " Nothing was written.");
+            return OK;
+        }
+        if (!dialable(probed.source()) || !dialable(probed.target())) {
+            return USAGE;
+        }
+
+        try (Broker source = brokers.open(probed.source().access());
+                Broker target = brokers.open(probed.target().access())) {
+            Map<String, Broker> byName = Map.of(from, source, to, target);
+            List<String> running = journal.movements().stream()
+                    .filter(movement -> byName.containsKey(movement.on())
+                            && !byName.get(movement.on()).finished(movement))
+                    .map(Broker.Movement::describe).toList();
+            if (!running.isEmpty()) {
+                err.println("acemq-infra: the cutover's drain is still running: "
+                        + String.join("; ", running) + ". A drain-back started now would carry"
+                        + " messages back while that carries them forward. Wait for it to finish,"
+                        + " or delete it, and run rollback again. Nothing was written.");
+                return FINDINGS;
+            }
+
+            Run.Builder builder = Run.of(probed.file())
+                    .from(probed.source().side(source))
+                    .to(probed.target().side(target))
+                    .steps(undo)
+                    .console(console);
+            if (settle != null) {
+                builder.allowingForStatistics(settle);
+            }
+
+            // The undo plan is a rehearsal of it, against the clusters as they are now: what each
+            // step of the rollback would do at this moment, with both brokers unable to write.
+            Execution rehearsal = Executor.execute(builder.rehearsal());
+            out.print(rehearsal.render());
+            List<String> cost = cost(undo, probed, byName);
+            Rollbacks.notes(completed, from).forEach(note -> out.println("  · " + note));
+            cost.forEach(out::println);
+            if (options.dryRun()) {
+                return rehearsal.ok() ? OK : FINDINGS;
+            }
+            if (!rehearsal.ok()) {
+                err.println("acemq-infra: the rollback could not be rehearsed to the end, so it is"
+                        + " not run. Nothing was written.");
+                return FINDINGS;
+            }
+
+            String name = probed.file().metadata().name().orElse("this deployment");
+            if (!confirmed(name, "acemq-infra: about to roll back " + name + ". Messages leave "
+                    + to + " and go back to " + from + " — a second cutover in the other"
+                    + " direction, with everything the first one cost.", options)) {
+                return FINDINGS;
+            }
+
+            // Marked before the first write, so that a rollback that dies halfway is still one
+            // that cannot be started a second time from the same journal.
+            Journal record = journal.rollback();
+            Execution undone = Executor.execute(builder.journal(record).cutover());
+            out.print(undone.render());
+            cost.forEach(out::println);
+            if (undone.outcome() == Execution.Outcome.REFUSED) {
+                // Refused in preflight, so nothing was written and there is nothing to have done
+                // twice. Leaving the mark would turn a pipeline's missing terminal into a journal
+                // that can never be rolled back.
+                record.withdraw();
+            } else {
+                out.println("this journal is now marked rolled back (" + undone.outcome().name()
+                        .toLowerCase(Locale.ROOT) + ") and will not be rolled back"
+                        + " again.");
+            }
+            record.broken().ifPresent(why -> err.println("acemq-infra: the journal stopped being"
+                    + " updated partway through the rollback (" + why + ")."));
+            return undone.ok() ? OK : FINDINGS;
+        } catch (RuntimeException unreachable) {
+            err.println("acemq-infra: " + unreachable.getMessage());
+            return FINDINGS;
+        }
+    }
+
+    /**
+     * What this rollback duplicates, counted before it starts.
+     *
+     * <p>The same number {@code BlueGreenCutoverIT} counts on the JVM: a message an application on
+     * the target has been handed and has not settled has been processed, and when that application
+     * follows the endpoint back it is requeued and the drain-back hands it to somebody a second
+     * time. That is what {@code atLeastOnce} costs, and it is a number rather than a warning. Read
+     * now, before the switch back, because once the application has gone it is a requeued message
+     * like any other and nothing on the broker can tell them apart.
+     */
+    private List<String> cost(List<Step> undo, Probed probed, Map<String, Broker> byName) {
+        Map<String, Inventory> inventories = Map.of(
+                probed.source().access().name(), probed.source().probed().inventory(),
+                probed.target().access().name(), probed.target().probed().inventory());
+        List<String> lines = new ArrayList<>();
+        Rollbacks.carriedBack(undo, inventories).forEach((cluster, queues) -> {
+            if (queues.isEmpty() || !byName.containsKey(cluster)) {
+                return;
+            }
+            Observation now = byName.get(cluster).measure(queues);
+            if (lines.isEmpty()) {
+                lines.add("");
+                lines.add("the cost of this rollback");
+            }
+            lines.add("  " + now.depth().describe() + " messages to carry back from " + cluster
+                    + " (" + String.join(", ", queues) + ")");
+            lines.add("  " + now.unacked().describe() + " of them handed to a consumer on "
+                    + cluster + " and not settled when the rollback was asked for: when it follows"
+                    + " the endpoint back they are requeued and handed out again — processed on"
+                    + " both clusters");
+        });
+        return lines;
+    }
+
+    /**
      * The gate in front of the first write.
      *
+     * @param name the deployment
+     * @param question what is about to happen, in the words the person answering needs
      * @return whether to go ahead
      */
-    private boolean confirmed(Probed probed, Options options) {
-        String name = probed.file().metadata().name().orElse("this deployment");
+    private boolean confirmed(String name, String question, Options options) {
         if (options.yes()) {
             out.println("--yes was given: " + name + " starts without asking. Questions the run"
                     + " asks after this point are still answered by whoever is watching it, and by"
@@ -338,9 +656,7 @@ public final class Cli {
             return true;
         }
 
-        Console.Answer answer = console.ask("acemq-infra: about to run " + name + ". Messages leave "
-                + probed.source().access().name() + " — after the drain the rollback for them is a"
-                + " second cutover in the other direction, not a switch back.");
+        Console.Answer answer = console.ask(question);
         switch (answer) {
             case PROCEED:
                 return true;
@@ -352,7 +668,7 @@ public final class Cli {
                 // The default that a pipeline gets, and it is a refusal rather than a prompt
                 // answered on somebody's behalf. Naming the flag is the whole of the message: a
                 // pipeline that means it says so once, in a file somebody reviewed.
-                err.println("acemq-infra: apply stops and asks before it writes anything, and there"
+                err.println("acemq-infra: this stops and asks before it writes anything, and there"
                         + " is no terminal here to ask. Run it from one, or pass --yes if this"
                         + " pipeline has already decided. Nothing was written.");
                 return false;
@@ -514,14 +830,22 @@ public final class Cli {
      * @param requireVariables whether an unset {@code ${VAR}} is an error rather than a warning
      * @param dryRun whether apply rehearses instead of writing
      * @param yes whether the confirmation in front of the first write has already been given
+     * @param journal where apply records what it did, and what rollback reads; null when not given
      */
-    private record Options(String file, boolean requireVariables, boolean dryRun, boolean yes) {
+    private record Options(String file, boolean requireVariables, boolean dryRun, boolean yes,
+                           String journal) {
+
+        /** The same command line, reading a file it did not name — rollback's, from the journal. */
+        Options reading(String path) {
+            return new Options(path, requireVariables, dryRun, yes, journal);
+        }
 
         static Options of(List<String> arguments) {
             String file = null;
             boolean require = false;
             boolean dry = false;
             boolean yes = false;
+            String journal = null;
             for (int index = 0; index < arguments.size(); index++) {
                 String argument = arguments.get(index);
                 switch (argument) {
@@ -541,15 +865,18 @@ public final class Cli {
                     case "--yes":
                         yes = true;
                         break;
+                    case "--journal":
+                        if (index + 1 >= arguments.size()) {
+                            throw new IllegalArgumentException(argument + " needs a path.");
+                        }
+                        journal = arguments.get(++index);
+                        break;
                     default:
                         throw new IllegalArgumentException("'" + argument + "' is not an option"
                                 + " this command takes.");
                 }
             }
-            if (file == null) {
-                throw new IllegalArgumentException("which file? Pass -f deployment.yaml.");
-            }
-            return new Options(file, require, dry, yes);
+            return new Options(file, require, dry, yes, journal);
         }
     }
 
@@ -559,7 +886,8 @@ public final class Cli {
 
                   acemq-infra validate -f FILE [--require-variables]
                   acemq-infra plan     -f FILE
-                  acemq-infra apply    -f FILE [--dry-run] [--yes]
+                  acemq-infra apply    -f FILE [--dry-run] [--yes] [--journal PATH]
+                  acemq-infra rollback --journal PATH [-f FILE] [--dry-run] [--yes]
 
                 validate  reads the file and checks it against the documented format and the
                           handful of rules that cost messages when they are broken. It never
@@ -580,7 +908,18 @@ public final class Cli {
                           it. --dry-run re-probes both clusters and rehearses every step
                           against them, reporting what each would do at this moment. A
                           rehearsal cannot write: the brokers it is given throw on every
-                          verb that would.
+                          verb that would. Every step is recorded as it happens in a
+                          journal: journals/NAME-TIMESTAMP.json beside the file, unless
+                          --journal says where. An existing journal is never overwritten.
+
+                rollback  undoes what one apply recorded in its journal: the steps that
+                          reached done, in reverse, with the drain run the other way. It
+                          re-probes both clusters, rehearses the undo against them and
+                          prints it with what it will duplicate, then asks exactly as apply
+                          does. -f defaults to the file the journal names, and must be that
+                          file unchanged. A journal from another file or other clusters, one
+                          already rolled back, or a cutover drain still running is refused.
+                          --dry-run stops after the rehearsal.
 
                 Exit codes: 0 ok, 1 findings, a refused plan, or a run that was refused,
                 stopped or aborted, 2 a bad command line.""");

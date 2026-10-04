@@ -116,7 +116,7 @@ which is a property [the library](library.md) explains rather than an accident.
 
 ## The GitHub Action
 
-A plan or an apply from a pipeline, with nothing installed. The action downloads
+A plan, an apply or a rollback from a pipeline, with nothing installed. The action downloads
 the binary for whatever runner it is on, checks it, and runs it.
 
 ```yaml
@@ -133,11 +133,12 @@ of this tool trustworthy, and a fold in a log is where that goes to die. Pass
 
 | Input | What it does |
 |---|---|
-| `command` | `validate`, `plan` or `apply` |
-| `file` | the deployment file |
+| `command` | `validate`, `plan`, `apply` or `rollback` |
+| `file` | the deployment file; `rollback` reads the one its journal names when this is empty |
+| `journal` | `apply`: where to record what it did (`--journal`); `rollback`: the journal to undo, required |
 | `version` | which release to run; defaults to the tag the action was used at, so `@v0.4.0` runs `0.4.0` |
-| `dry-run` | `apply` only: rehearse every step against both clusters and write nothing |
-| `assume-yes` | `apply` only: consent to the run starting, which is `--yes` |
+| `dry-run` | `apply` or `rollback`: rehearse every step against both clusters and write nothing |
+| `assume-yes` | `apply` or `rollback`: consent to the run starting, which is `--yes` |
 | `require-variables` | `validate` only: an unset `${VAR}` is an error |
 | `args` | anything else, passed straight through |
 | `working-directory` | where to run, for relative paths in the file |
@@ -145,8 +146,9 @@ of this tool trustworthy, and a fold in a log is where that goes to die. Pass
 | `github-token` | a token, for that check |
 | `summary` | put the output in the job summary; on by default |
 
-It outputs `exit-code` and `output-file`, so a later step can read what happened
-without re-running anything.
+It outputs `exit-code`, `output-file` and `journal`, so a later step can read
+what happened without re-running anything — and find the journal a rollback
+needs.
 
 There is deliberately no second set of names for the flags. A pipeline where
 `--dry-run` is spelled one way in the shell and another way in the Action is a
@@ -180,6 +182,51 @@ to run end to end without a person needs `endpoint: kind: hook`, which is
 
 The honest recommendation is `dry-run: true` on pull requests and `assume-yes: true`
 only on a workflow somebody triggers deliberately.
+
+### Rolling back from a pipeline
+
+`rollback` is in the binaries released after 0.4; the `0.4.0` binary does not
+have it. A rollback needs the journal the apply wrote, and a runner's disk does
+not outlive its job, so keep it:
+
+```yaml
+- id: cutover
+  uses: AceMQ-Company/acemq-infrastructure@vX.Y.Z
+  with:
+    command: apply
+    file: deployment.yaml
+    assume-yes: true
+- if: always() && steps.cutover.outputs.journal != ''
+  uses: actions/upload-artifact@v4
+  with:
+    name: cutover-journal
+    path: ${{ steps.cutover.outputs.journal }}
+```
+
+and in the workflow somebody triggers to undo it, after downloading that
+artifact:
+
+```yaml
+- uses: AceMQ-Company/acemq-infrastructure@vX.Y.Z
+  with:
+    command: rollback
+    file: deployment.yaml
+    journal: journals/orders-blue-green-20261004T141500Z.json
+    assume-yes: true
+```
+
+`file` is worth giving here even though it is optional: the journal records the
+deployment file's absolute path on the runner that applied it, which a later job
+may have checked out somewhere else. It still has to be the same file, byte for
+byte.
+
+The same rules hold as for `apply`: `assume-yes` consents to the start and to
+nothing after it, so an `endpoint: kind: external` switch back still refuses with
+nobody watching. `dry-run: true` prints the undo and what it will duplicate, and
+writes nothing. A journal is refused when the deployment file has changed since
+it was written, when it is a newer format, and when it has already been rolled
+back. [Blue/green](blue-green.md#running-it-the-journal-and-acemq-infra-rollback)
+has the rest.
 
 ## Building it yourself
 

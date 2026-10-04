@@ -150,6 +150,108 @@ The `for: 72h` is not enforcement, it is documentation with a name: it is the
 window during which somebody has agreed not to delete blue. The tool will remind
 you it has passed. It will not delete anything.
 
+### Running it: the journal, and `acemq-infra rollback`
+
+A rollback is derived from what a run *did*, not from what was planned: the
+steps that reached `done`, in reverse, with the drain run the other way and the
+endpoint switched back first. A topology copy, a connection close, a mirror and
+an announcement are not inverted, for the reasons `Rollbacks` gives. When the
+file writes `rollback.steps` out, that list is used unchanged.
+
+What a run did lives in the process that ran it, so `apply` writes it down. Every
+cutover leaves a **journal**: `journals/<name>-<timestamp>.json` beside the
+deployment file, or wherever `--journal PATH` says. It is created before the
+first write — a run whose journal cannot be written does not start — and an
+existing file is never overwritten, because it is the only record of how to undo
+some earlier run. After that it is rewritten after every step through a
+temporary file and an atomic rename, so a process killed mid-run leaves the
+journal as it was after the last step and never a torn one. `apply` prints where
+it is, and when there is something to undo, the command that undoes it:
+
+```console
+$ acemq-infra apply -f orders.yaml
+...
+journal: /work/journals/orders-blue-green-20261004T141500Z.json
+...
+the cutover completed. the rollback for what happened is 2 steps.
+to undo it: acemq-infra rollback --journal /work/journals/orders-blue-green-20261004T141500Z.json
+```
+
+`acemq-infra rollback --journal PATH [-f FILE] [--dry-run] [--yes]` reads it
+back. It re-probes both clusters, then rehearses the undo against them through
+the same decorator `apply --dry-run` uses, whose writing verbs throw — that
+rehearsal is the undo plan, printed with what it will cost:
+
+```console
+the cost of this rollback
+  140 messages to carry back from green (orders.new, orders.priority)
+  25 of them handed to a consumer on green and not settled when the rollback
+  was asked for: when it follows the endpoint back they are requeued and handed
+  out again — processed on both clusters
+```
+
+That second number is the one `BlueGreenCutoverIT` measures on the JVM, read
+before the switch back because afterwards a requeued message is a requeued
+message and nothing on the broker can tell them apart. Then it asks exactly as
+`apply` does — the word `yes` at a terminal, or `--yes` from a pipeline, which
+consents to the start and to nothing after it — and runs the rollback as a
+second cutover, writing its own steps into the same journal. `--dry-run` stops
+after the rehearsal. `-f` defaults to the file the journal names.
+
+It refuses, and writes nothing, when:
+
+- **the journal is from another plan.** The deployment file's bytes are
+  fingerprinted, and the clusters' management URLs recorded; a changed file, a
+  `from`/`to` that moved, or a variable that now points somewhere else is
+  refused. The steps are recorded by their position in the file's step list and
+  checked by id as well.
+- **the journal is a newer format** than this build reads. It does not guess.
+- **it has already been rolled back** — or a rollback of it was started. The
+  journal is marked before the rollback's first write, so one that died halfway
+  still cannot be started a second time from the same file.
+- **the cutover's drain is still running.** A drain-back started while the
+  forward shovel is moving messages would chase it in a circle.
+
+A journal still saying `running` is the record of a crash. A step left at
+`started` in it is counted as having happened — a drain killed halfway has moved
+some of the messages, and the drain-back moves whatever it moved — and the
+rollback says which.
+
+The format, version 1:
+
+```json
+{
+  "format": 1,
+  "tool": "acemq-infra …",
+  "deployment": "orders-blue-green",
+  "file": "/work/orders.yaml",
+  "fileSha256": "9f2c…",
+  "from": "blue",
+  "to": "green",
+  "clusters": { "blue": "https://blue.internal:15671", "green": "https://green.internal:15671" },
+  "startedAt": "2026-10-04T14:15:00Z",
+  "outcome": "completed",
+  "endedAt": "2026-10-04T14:31:12Z",
+  "steps": [
+    { "number": 1, "index": null, "id": "backup", "status": "done", "lines": ["…"] },
+    { "number": 6, "index": 5, "id": "drain-messages", "status": "done", "lines": ["…"] }
+  ],
+  "movements": [
+    { "label": "acemq-orders-blue-green-drain-blue-to-green", "on": "green", "parts": ["…"] }
+  ],
+  "rollback": { "startedAt": "…", "outcome": "completed", "steps": [ ], "movements": [ ] }
+}
+```
+
+`outcome` is `running` until the run ends, then `completed`, `aborted`,
+`stopped` or `refused`. A step's `status` is `started` until it ends, then
+`done` or `failed`. `index` is the step's position in the file's step list, or
+`null` for the backup, which is not a step in the file and is never undone.
+`movements` are the shovels a drain declared. `rollback` is absent until a
+rollback starts. Management URLs are recorded with any credentials stripped;
+nothing else in the file is a secret. A format change that an older build could
+misread bumps `format`.
+
 ## Active/passive, and the thing that word was hiding
 
 The old configuration had `mode: ActivePassive`. It is worth unpacking, because
