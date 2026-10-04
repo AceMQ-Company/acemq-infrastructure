@@ -63,6 +63,23 @@ spec:
                 description: "Plan only. The plan is written into status and never\
                   \ applied, whatever spec.approve says."
                 type: "boolean"
+              journalFrom:
+                description: "Roll back from a journal another Cutover left behind:\
+                  \ a ConfigMap in this namespace the operator kept, labelled infra.acemq.org/retained=true,\
+                  \ when that Cutover was deleted unrolled-back. Only with action:\
+                  \ rollback; this resource then never plans or applies."
+                properties:
+                  configMapRef:
+                    description: "The retained journal's ConfigMap, in this namespace."
+                    properties:
+                      name:
+                        type: "string"
+                    required:
+                    - "name"
+                    type: "object"
+                required:
+                - "configMapRef"
+                type: "object"
               variables:
                 description: "Values for the ${VAR} references in the deployment file,\
                   \ each a literal value or a key of a Secret in this namespace. Credentials\

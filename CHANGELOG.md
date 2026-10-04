@@ -9,6 +9,29 @@ on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
 
 ## [Unreleased]
 
+### Changed
+
+- **A Cutover's journal outlives it when it is still needed.** Deleting a
+  Cutover used to delete its journal ConfigMap through the owner reference,
+  and with it the only record of how to undo the run. The operator now holds
+  each Cutover with the finalizer `infra.acemq.org/journal`; on deletion a
+  journal of a run that was not rolled back (or whose rollback did not
+  complete, or that cannot be read) is detached from the Cutover, labelled
+  `infra.acemq.org/retained=true` with the Cutover's name and uid, annotated
+  with why, and given the Cutover's `deployment.yaml` and variable references
+  beside it. A journal with nothing to undo goes with the Cutover as before.
+  Kept ConfigMaps are the user's to delete.
+
+### Added
+
+- **`spec.journalFrom`: roll back from a kept journal.** A new Cutover with
+  `spec.action: rollback` and `spec.journalFrom.configMapRef.name` adopts a
+  retained journal — by becoming its owner, so one journal is rolled back by
+  one Cutover — and rolls it back with the CLI's refusals. Only ConfigMaps
+  labelled `infra.acemq.org/retained=true`, and only with `action: rollback`.
+  [The operator](docs/operator.md#the-journal-outlives-the-cutover) also shows
+  how to roll one back by hand with `acemq-infra rollback --journal`.
+
 ## [0.6.0] - 2026-10-04
 
 ### Added

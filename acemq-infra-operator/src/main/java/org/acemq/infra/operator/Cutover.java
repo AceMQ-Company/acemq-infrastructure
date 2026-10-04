@@ -97,6 +97,27 @@ public class Cutover extends CustomResource<Cutover.Spec, Cutover.Status> implem
                 + " the same derivation and refusals as acemq-infra rollback.")
         @Pattern("^(rollback)?$")
         public String action;
+
+        @JsonPropertyDescription("Roll back from a journal another Cutover left behind: a"
+                + " ConfigMap in this namespace the operator kept, labelled"
+                + " infra.acemq.org/retained=true, when that Cutover was deleted unrolled-back."
+                + " Only with action: rollback; this resource then never plans or applies.")
+        public JournalFrom journalFrom;
+    }
+
+    /** Where an adopted journal is. */
+    public static class JournalFrom {
+
+        @Required
+        @JsonPropertyDescription("The retained journal's ConfigMap, in this namespace.")
+        public ConfigMapRef configMapRef;
+    }
+
+    /** A ConfigMap in the resource's own namespace. */
+    public static class ConfigMapRef {
+
+        @Required
+        public String name;
     }
 
     /** One {@code ${VAR}}. */

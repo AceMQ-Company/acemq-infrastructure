@@ -36,11 +36,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
+import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.javaoperatorsdk.operator.api.reconciler.Cleaner;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
+import io.javaoperatorsdk.operator.api.reconciler.DeleteControl;
 import io.javaoperatorsdk.operator.api.reconciler.Reconciler;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 
@@ -67,8 +70,8 @@ import org.slf4j.LoggerFactory;
  *       informer's cache, which can be a write behind.
  * </ul>
  */
-@ControllerConfiguration
-public class CutoverReconciler implements Reconciler<Cutover> {
+@ControllerConfiguration(finalizerName = CutoverReconciler.FINALIZER)
+public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> {
 
     private static final Logger LOG = LoggerFactory.getLogger(CutoverReconciler.class);
 
@@ -76,6 +79,21 @@ public class CutoverReconciler implements Reconciler<Cutover> {
 
     /** The key the journal is kept under, in the ConfigMap. */
     static final String JOURNAL_KEY = "journal.json";
+
+    /** The deployment file, copied beside a retained journal: the rollback needs it verbatim. */
+    static final String DEPLOYMENT_KEY = "deployment.yaml";
+
+    /** How each variable was given, beside a retained journal. References, never values. */
+    static final String VARIABLES_KEY = "variables";
+
+    /** Holds a deleted Cutover until its journal has been kept or let go. */
+    static final String FINALIZER = "infra.acemq.org/journal";
+
+    /** On a journal kept after its Cutover was deleted. */
+    static final String RETAINED = "infra.acemq.org/retained";
+    static final String CUTOVER = "infra.acemq.org/cutover";
+    static final String CUTOVER_UID = "infra.acemq.org/cutover-uid";
+    static final String RETAINED_REASON = "infra.acemq.org/retained-reason";
 
     private static final Set<String> RAN = Set.of(Cutover.COMPLETED, Cutover.FAILED,
             Cutover.INTERRUPTED);
@@ -97,6 +115,80 @@ public class CutoverReconciler implements Reconciler<Cutover> {
         return fresh == null ? UpdateControl.noUpdate() : handle(fresh);
     }
 
+    /**
+     * A deleted Cutover's journal is kept when it is still the only record of how to undo a run:
+     * the owner reference that would have the garbage collector take it is removed, and it is
+     * labelled and annotated with why. Otherwise it goes with the Cutover. Each step is idempotent
+     * and the finalizer is released only after the ConfigMap is in its final shape, so an operator
+     * stopped half way does the same again on the next pass.
+     */
+    @Override
+    public DeleteControl cleanup(Cutover cutover, Context<Cutover> context) {
+        ConfigMap map = configMap(cutover);
+        String uid = cutover.getMetadata().getUid();
+        // Not ours — never adopted, or already let go of on an earlier pass: nothing to decide.
+        if (map == null || !ownedBy(map, uid)) {
+            return DeleteControl.defaultDelete();
+        }
+        String reason = retained(cutover, map);
+        if (reason == null) {
+            return DeleteControl.defaultDelete();
+        }
+        String sources = sources(cutover);
+        client.configMaps().inNamespace(namespace(cutover)).withName(map.getMetadata().getName())
+                .edit(kept -> {
+                    kept.getMetadata().getOwnerReferences().removeIf(o -> uid.equals(o.getUid()));
+                    kept.getMetadata().getLabels().put(RETAINED, "true");
+                    kept.getMetadata().getLabels().put(CUTOVER, name(cutover));
+                    kept.getMetadata().getLabels().put(CUTOVER_UID, uid);
+                    kept.getMetadata().getAnnotations().put(RETAINED_REASON, reason);
+                    kept.getData().putIfAbsent(DEPLOYMENT_KEY, cutover.getSpec().deployment);
+                    kept.getData().putIfAbsent(VARIABLES_KEY, sources);
+                    return kept;
+                });
+        LOG.info("{}/{}: deleted; journal {} kept: {}", namespace(cutover), name(cutover),
+                map.getMetadata().getName(), reason);
+        return DeleteControl.defaultDelete();
+    }
+
+    /** Why a deleted Cutover's journal must outlive it, or null when it need not. */
+    private static String retained(Cutover cutover, ConfigMap map) {
+        String who = "Cutover " + name(cutover) + " (uid " + cutover.getMetadata().getUid() + ")";
+        JsonNode journal;
+        try {
+            journal = JSON.readTree(map.getData() == null ? null : map.getData().get(JOURNAL_KEY));
+        } catch (IOException | IllegalArgumentException unreadable) {
+            journal = null;
+        }
+        if (journal == null || !journal.isObject()) {
+            return who + " was deleted and its journal cannot be read; kept rather than guessed"
+                    + " at.";
+        }
+        JsonNode rollback = journal.path("rollback");
+        if (rollback.isObject()) {
+            String outcome = rollback.path("outcome").asText("running");
+            return "completed".equals(outcome) ? null : who + " was deleted after a rollback"
+                    + " that ended " + outcome + ". Neither the operator nor the CLI starts a"
+                    + " second one; kept to finish by hand.";
+        }
+        if (journal.path("steps").isEmpty()) {
+            return null; // nothing started, so nothing to undo
+        }
+        Cutover.Status s = new Cutover.Status();
+        summarise(s, journal);
+        return who + " was deleted with its journal " + s.journalOutcome + ", last step "
+                + s.lastStep + ", and not rolled back. Kept so it can be: a Cutover with"
+                + " spec.action: rollback and spec.journalFrom naming this ConfigMap, or"
+                + " acemq-infra rollback --journal with the journal.json and deployment.yaml"
+                + " here.";
+    }
+
+    private static boolean ownedBy(ConfigMap map, String uid) {
+        return map.getMetadata().getOwnerReferences().stream()
+                .anyMatch(owner -> uid.equals(owner.getUid()));
+    }
+
+    /** One pass of the state machine
     /** One pass of the state machine over the resource as the API server has it now. */
     UpdateControl<Cutover> handle(Cutover cutover) {
         Cutover.Status status = cutover.getStatus() == null ? new Cutover.Status()
@@ -128,6 +220,29 @@ public class CutoverReconciler implements Reconciler<Cutover> {
                     : UpdateControl.noUpdate();
         }
 
+        if (spec.journalFrom != null) {
+            if (!Cutover.ROLLBACK.equals(spec.action)) {
+                write(cutover, s -> {
+                    s.phase = Cutover.REFUSED;
+                    s.message = "spec.journalFrom is for undoing another Cutover's run, and only"
+                            + " with spec.action: rollback. This resource plans and applies"
+                            + " nothing.";
+                });
+                return UpdateControl.noUpdate();
+            }
+            if (!RAN.contains(phase) && !FINISHED.contains(phase)) {
+                String refused = adopt(cutover);
+                if (refused != null) {
+                    write(cutover, s -> {
+                        s.phase = Cutover.REFUSED;
+                        s.message = refused + " Nothing was written.";
+                    });
+                    return UpdateControl.noUpdate();
+                }
+                // Now in a phase that ran, with the journal as its own: the rollback below.
+                return handle(client.resource(cutover).get());
+            }
+        }
         if (Cutover.ROLLBACK.equals(spec.action)) {
             if (RAN.contains(phase)) {
                 return rollback(cutover, phase);
@@ -310,6 +425,66 @@ public class CutoverReconciler implements Reconciler<Cutover> {
         }
     }
 
+    // ---------------------------------------------------------------- a retained journal
+
+    /**
+     * Takes the retained journal {@code spec.journalFrom} names, by becoming its owner, and writes
+     * the run it records into status, so the rollback below proceeds as for this resource's own.
+     * The owner reference is the claim: a journal already owned by another Cutover is refused,
+     * and the update carries the resourceVersion read, so of two Cutovers racing for one journal
+     * only one takes it.
+     *
+     * @return why it cannot be taken, or null when it was
+     */
+    private String adopt(Cutover cutover) {
+        String name = journalName(cutover);
+        ConfigMap map = configMap(cutover);
+        if (map == null) {
+            return "spec.journalFrom names ConfigMap " + name + ", and there is no such ConfigMap"
+                    + " in namespace " + namespace(cutover) + ".";
+        }
+        String uid = cutover.getMetadata().getUid();
+        if (!ownedBy(map, uid)) {
+            if (!"true".equals(map.getMetadata().getLabels().get(RETAINED))) {
+                return "ConfigMap " + name + " is not a retained journal: it has no label "
+                        + RETAINED + "=true. Only a journal the operator kept when its Cutover was"
+                        + " deleted is adopted.";
+            }
+            if (!map.getMetadata().getOwnerReferences().isEmpty()) {
+                return "the journal in ConfigMap " + name + " has been taken by "
+                        + map.getMetadata().getOwnerReferences().get(0).getKind() + " "
+                        + map.getMetadata().getOwnerReferences().get(0).getName()
+                        + ". One journal is rolled back by one Cutover.";
+            }
+            if (map.getData() == null || !map.getData().containsKey(JOURNAL_KEY)) {
+                return "ConfigMap " + name + " has no " + JOURNAL_KEY + ".";
+            }
+            map.getMetadata().getOwnerReferences().add(ownerReference(cutover));
+            try {
+                client.configMaps().inNamespace(namespace(cutover)).resource(map).update();
+            } catch (RuntimeException lost) {
+                return "the journal in ConfigMap " + name + " could not be taken: "
+                        + lost.getMessage();
+            }
+            LOG.info("{}/{}: took the retained journal {}", namespace(cutover), name(cutover),
+                    name);
+        }
+        JsonNode journal = journal(cutover);
+        write(cutover, s -> {
+            summarise(s, journal);
+            s.journal = name;
+            s.observedGeneration = cutover.getMetadata().getGeneration();
+            s.phase = switch (String.valueOf(s.journalOutcome)) {
+                case "completed" -> Cutover.COMPLETED;
+                case "running" -> Cutover.INTERRUPTED;
+                default -> Cutover.FAILED;
+            };
+            s.message = "took the retained journal " + name + " (journal " + s.journalOutcome
+                    + ", last step " + s.lastStep + ") to roll it back.";
+        });
+        return null;
+    }
+
     // ---------------------------------------------------------------- the journal, in the cluster
 
     /**
@@ -329,12 +504,7 @@ public class CutoverReconciler implements Reconciler<Cutover> {
                                     .withNamespace(namespace(cutover))
                                     .addToLabels("app.kubernetes.io/managed-by",
                                             "acemq-infra-operator")
-                                    .withOwnerReferences(new OwnerReferenceBuilder()
-                                            .withApiVersion(cutover.getApiVersion())
-                                            .withKind(cutover.getKind())
-                                            .withName(name(cutover))
-                                            .withUid(cutover.getMetadata().getUid())
-                                            .build())
+                                    .withOwnerReferences(ownerReference(cutover))
                                     .endMetadata()
                                     .addToData(JOURNAL_KEY, json)
                                     .build()).create();
@@ -500,8 +670,20 @@ public class CutoverReconciler implements Reconciler<Cutover> {
                 });
     }
 
+    /** The journal's ConfigMap: this resource's own, or the retained one it adopts. */
     static String journalName(Cutover cutover) {
-        return name(cutover) + "-journal";
+        Cutover.JournalFrom from = cutover.getSpec() == null ? null : cutover.getSpec().journalFrom;
+        return from != null && from.configMapRef != null && from.configMapRef.name != null
+                ? from.configMapRef.name : name(cutover) + "-journal";
+    }
+
+    private static OwnerReference ownerReference(Cutover cutover) {
+        return new OwnerReferenceBuilder()
+                .withApiVersion(cutover.getApiVersion())
+                .withKind(cutover.getKind())
+                .withName(name(cutover))
+                .withUid(cutover.getMetadata().getUid())
+                .build();
     }
 
     private static String name(Cutover cutover) {

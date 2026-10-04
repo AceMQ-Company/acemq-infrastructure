@@ -99,6 +99,7 @@ spec:
 | `approve` | The fingerprint of the plan being approved, copied from `status.planFingerprint`. |
 | `dryRun` | `true`: plan only, never apply, whatever `approve` says. |
 | `action` | `rollback`: undo what the journal records. The only value. |
+| `journalFrom` | `{configMapRef: {name}}`: roll back from a journal a deleted Cutover left behind, instead of this resource's own. Only with `action: rollback`; [below](#rolling-back-after-the-cutover-was-deleted). |
 
 ### `status`
 
@@ -108,7 +109,7 @@ spec:
 | `message` | What a human needs to know now, including the tail of the CLI's output. |
 | `plan` | The plan, exactly as `acemq-infra plan` prints it. |
 | `planFingerprint` | The plan's name, for `spec.approve`. |
-| `journal` | The ConfigMap holding the journal: `<name>-journal`, key `journal.json`. |
+| `journal` | The ConfigMap holding the journal: `<name>-journal`, or the one `journalFrom` names; key `journal.json`. |
 | `journalOutcome` | The journal's `outcome`: `running`, `completed`, `aborted`, `stopped`, `refused`. |
 | `lastStep` | The last step the journal records, and how it stands — `3 drain-messages started`. |
 | `steps` | Every step in the journal, the rollback's too. |
@@ -187,8 +188,86 @@ $ kubectl get configmap orders-2026-10-04-journal \
 $ acemq-infra rollback --journal journal.json -f orders.yaml
 ```
 
-Deleting the Cutover deletes its journal with it. Export it first if the run
-might still need undoing.
+### The journal outlives the Cutover
+
+A journal is the only record of how to undo a run, so deleting the Cutover does
+not delete it while it is still needed. The operator holds every Cutover with a
+finalizer, `infra.acemq.org/journal`, and on deletion decides:
+
+| The journal | On deletion |
+|---|---|
+| none — planned, refused, dry run | nothing to keep |
+| no step started (a preflight refusal) | goes with the Cutover |
+| rolled back, `completed` | goes with the Cutover |
+| a run that was **not rolled back** | **kept** |
+| a rollback that did not complete | **kept**, to finish by hand |
+| unreadable | **kept** |
+
+A kept journal is detached — the owner reference that would have the garbage
+collector take it is removed — and labelled and annotated:
+
+```console
+$ kubectl get configmaps -l infra.acemq.org/retained=true
+$ kubectl get configmap orders-2026-10-04-journal \
+    -o jsonpath='{.metadata.annotations.infra\.acemq\.org/retained-reason}'
+```
+
+The labels are `infra.acemq.org/retained: "true"`, `infra.acemq.org/cutover`
+(the deleted Cutover's name) and `infra.acemq.org/cutover-uid`. Beside
+`journal.json` the operator copies `deployment.yaml` — the deleted Cutover's
+`spec.deployment`, verbatim, which a rollback is checked against byte for
+byte — and `variables`, how each variable was given (Secret references, never
+values). The finalizer is released only after the ConfigMap is in that shape,
+and every step is idempotent, so an operator stopped half way through simply
+does it again. A kept ConfigMap is yours to delete once it is no longer needed.
+
+Delete with the default (background) cascade. `kubectl delete
+--cascade=foreground` has the garbage collector delete dependents *before* the
+finalizer runs, and the journal goes with them.
+
+### Rolling back after the Cutover was deleted
+
+From the cluster, with a new Cutover that adopts the kept journal:
+
+```yaml
+apiVersion: infra.acemq.org/v1alpha1
+kind: Cutover
+metadata:
+  name: orders-2026-10-04-undo
+  namespace: orders
+spec:
+  action: rollback
+  journalFrom:
+    configMapRef: {name: orders-2026-10-04-journal}
+  variables: []      # the same variables the run had; see the ConfigMap's `variables`
+  deployment: |      # the ConfigMap's deployment.yaml, verbatim
+    ...
+```
+
+The operator takes the journal by becoming its owner — one journal is rolled
+back by one Cutover; a second is refused and named — reports the run it
+records in `status`, and rolls it back exactly as for its own: the same
+refusals as `acemq-infra rollback`, so a `deployment` that is not
+byte-for-byte the file the journal was written from, clusters that resolve
+somewhere else now, a journal already rolled back, or a drain still running are
+all refused and nothing is written. It refuses a ConfigMap that is not
+labelled `infra.acemq.org/retained=true`, and a `journalFrom` without
+`action: rollback`; such a Cutover never plans or applies. Once rolled back,
+deleting it lets the journal go.
+
+Or by hand, with the binary, from the same two keys:
+
+```console
+$ kubectl get configmap orders-2026-10-04-journal \
+    -o jsonpath='{.data.journal\.json}' > journal.json
+$ kubectl get configmap orders-2026-10-04-journal \
+    -o jsonpath='{.data.deployment\.yaml}' > orders.yaml
+$ acemq-infra rollback --journal journal.json -f orders.yaml
+```
+
+with the variables in the environment. The CLI does not write back to the
+ConfigMap, so delete it afterwards, or a later Cutover could adopt a journal
+that has in fact been rolled back — and be refused only by the brokers' state.
 
 ## Restart safety
 
@@ -282,7 +361,10 @@ with an engine that records instead of touching a broker: plan then approve, a
 stale approval refused, a dry run, a restart that finds `Applying` and runs
 nothing however often it is reconciled, a journal with no status to explain it,
 rollback from `Interrupted`, a refused rollback asked again, an interrupted
-rollback, and Secret resolution that names a missing Secret and never shows a
+rollback, a deleted Cutover keeping a journal that was not rolled back (twice,
+to the same result) and letting go of one that was, a new Cutover rolling back
+from a kept journal once and taking it, the refusals of `journalFrom`, and
+Secret resolution that names a missing Secret and never shows a
 value.
 
 `scripts/operator-e2e.sh` runs it for real, on a kind cluster it creates and
@@ -290,5 +372,6 @@ deletes: the RabbitMQ Cluster Operator, two `RabbitmqCluster`s, the operator
 image, and three runs — a cutover of a backlog with a consumer attached,
 counted message by message; a cutover rolled back through `spec.action`; and
 the operator pod killed without grace while the drain runs, which has to come
-back `Interrupted` with the journal untouched and then roll back. CI runs it on
-every push.
+back `Interrupted` with the journal untouched and then roll back; and a
+completed Cutover deleted, its journal kept and then rolled back by a new
+Cutover through `journalFrom`. CI runs it on every push.

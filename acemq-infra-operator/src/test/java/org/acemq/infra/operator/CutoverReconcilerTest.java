@@ -238,6 +238,107 @@ class CutoverReconcilerTest {
         assertThat(status.message).contains("green-default-user").contains("no such Secret");
     }
 
+    @Test
+    @DisplayName("deleting a Cutover whose run was not rolled back keeps its journal, detached and"
+            + " labelled, and does the same however often it is asked")
+    void deletionRetainsTheJournal() {
+        complete("orders");
+        String uid = fetch("orders").getMetadata().getUid();
+        assertThat(configMap("orders-journal").getMetadata().getOwnerReferences())
+                .extracting(r -> r.getUid()).containsExactly(uid);
+
+        for (int pass = 0; pass < 2; pass++) {
+            assertThat(reconciler.cleanup(fetch("orders"), null).isRemoveFinalizer()).isTrue();
+            ConfigMap kept = configMap("orders-journal");
+            assertThat(kept.getMetadata().getOwnerReferences()).isEmpty();
+            assertThat(kept.getMetadata().getLabels())
+                    .containsEntry(CutoverReconciler.RETAINED, "true")
+                    .containsEntry(CutoverReconciler.CUTOVER, "orders")
+                    .containsEntry(CutoverReconciler.CUTOVER_UID, uid);
+            assertThat(kept.getMetadata().getAnnotations().get(CutoverReconciler.RETAINED_REASON))
+                    .contains("orders").contains("completed").contains("not rolled back");
+            assertThat(kept.getData()).containsEntry(CutoverReconciler.DEPLOYMENT_KEY, DEPLOYMENT)
+                    .containsKey(CutoverReconciler.JOURNAL_KEY);
+        }
+    }
+
+    @Test
+    @DisplayName("deleting a Cutover that never ran, or was rolled back, lets its journal go")
+    void deletionLetsGo() {
+        create("planned");
+        reconcile("planned");
+        assertThat(reconciler.cleanup(fetch("planned"), null).isRemoveFinalizer()).isTrue();
+        assertThat(client.configMaps().inNamespace(NS).list().getItems()).isEmpty();
+
+        complete("undone");
+        action("undone", Cutover.ROLLBACK);
+        reconcile("undone");
+        assertThat(status("undone").phase).isEqualTo(Cutover.ROLLED_BACK);
+        assertThat(reconciler.cleanup(fetch("undone"), null).isRemoveFinalizer()).isTrue();
+        ConfigMap owned = configMap("undone-journal");
+        assertThat(owned.getMetadata().getOwnerReferences()).hasSize(1);
+        assertThat(owned.getMetadata().getLabels()).doesNotContainKey(CutoverReconciler.RETAINED);
+    }
+
+    @Test
+    @DisplayName("a new Cutover rolls back from a retained journal, takes it, and only once")
+    void rollbackFromRetained() {
+        complete("orders");
+        reconciler.cleanup(fetch("orders"), null);
+        client.resources(Cutover.class).inNamespace(NS).withName("orders").delete();
+        String journal = journal("orders");
+        int plans = engine.plans;
+
+        undo("undo", "orders-journal");
+        reconcile("undo");
+        Cutover.Status status = status("undo");
+        assertThat(engine.rollbacks).containsExactly(journal);
+        assertThat(engine.files).containsExactly(DEPLOYMENT);
+        assertThat(status.phase).isEqualTo(Cutover.ROLLED_BACK);
+        assertThat(status.journal).isEqualTo("orders-journal");
+        assertThat(status.rollbackOutcome).isEqualTo("completed");
+        assertThat(journal("orders")).contains("\"rollback\"");
+        assertThat(configMap("orders-journal").getMetadata().getOwnerReferences())
+                .extracting(r -> r.getUid()).containsExactly(fetch("undo").getMetadata().getUid());
+        assertThat(engine.plans).isEqualTo(plans);
+        assertThat(engine.applies).hasSize(1);
+
+        reconcile("undo");
+        assertThat(engine.rollbacks).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("journalFrom refuses a ConfigMap that is not a retained journal, one another"
+            + " Cutover has taken, and anything but a rollback")
+    void journalFromRefusals() {
+        storeJournal("stray", RUNNING_AT_DRAIN);
+        undo("a", "stray-journal");
+        reconcile("a");
+        assertThat(status("a").phase).isEqualTo(Cutover.REFUSED);
+        assertThat(status("a").message).contains(CutoverReconciler.RETAINED);
+
+        complete("orders");
+        reconciler.cleanup(fetch("orders"), null);
+        client.resources(Cutover.class).inNamespace(NS).withName("orders").delete();
+        engine.refuseRollback = true;
+        undo("first", "orders-journal");
+        reconcile("first");
+        undo("second", "orders-journal");
+        reconcile("second");
+        assertThat(status("second").phase).isEqualTo(Cutover.REFUSED);
+        assertThat(status("second").message).contains("first");
+
+        Cutover planning = cutover("planning");
+        planning.getSpec().journalFrom = journalFrom("orders-journal");
+        client.resource(planning).create();
+        int plans = engine.plans;
+        reconcile("planning");
+        assertThat(status("planning").phase).isEqualTo(Cutover.REFUSED);
+        assertThat(status("planning").message).contains("action: rollback");
+        assertThat(engine.plans).isEqualTo(plans);
+        assertThat(engine.rollbacks).isEmpty();
+    }
+
     // ---------------------------------------------------------------- the fake engine
 
     /** Plans with a fingerprint the test sets, and writes journals the way the CLI does. */
@@ -247,6 +348,7 @@ class CutoverReconcilerTest {
         int plans;
         Map<String, String> env;
         String sources;
+        final List<String> files = new ArrayList<>();
         final List<String> applies = new ArrayList<>();
         final List<String> rollbacks = new ArrayList<>();
         boolean refuseRollback;
@@ -276,6 +378,7 @@ class CutoverReconcilerTest {
         public Ran rollback(Path file, Path journal, Map<String, String> env,
                             Journal.Mirror mirror) {
             String before = read(journal);
+            files.add(read(file));
             if (refuseRollback) {
                 return new Ran(1, "acemq-infra: the cutover's drain is still running.\n");
             }
@@ -304,6 +407,33 @@ class CutoverReconcilerTest {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /** Planned, approved and run to Completed, with its journal in its ConfigMap. */
+    private void complete(String name) {
+        create(name);
+        reconcile(name);
+        approve(name, "plan-1");
+        reconcile(name);
+        assertThat(status(name).phase).isEqualTo(Cutover.COMPLETED);
+    }
+
+    private void undo(String name, String configMap) {
+        Cutover cutover = cutover(name);
+        cutover.getSpec().action = Cutover.ROLLBACK;
+        cutover.getSpec().journalFrom = journalFrom(configMap);
+        client.resource(cutover).create();
+    }
+
+    private static Cutover.JournalFrom journalFrom(String configMap) {
+        Cutover.JournalFrom from = new Cutover.JournalFrom();
+        from.configMapRef = new Cutover.ConfigMapRef();
+        from.configMapRef.name = configMap;
+        return from;
+    }
+
+    private ConfigMap configMap(String name) {
+        return client.configMaps().inNamespace(NS).withName(name).get();
+    }
 
     private void reconcile(String name) {
         reconciler.handle(fetch(name));

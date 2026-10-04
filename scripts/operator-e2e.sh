@@ -19,6 +19,9 @@
 #   3. restart   the operator pod is killed (no grace) while the drain step
 #                runs. The new one must mark the Cutover Interrupted, name the
 #                step, and run nothing; then a rollback from there.
+#   4. retained  a completed Cutover is deleted. Its journal must outlive it,
+#                detached and labelled; a new Cutover adopts it through
+#                spec.journalFrom and rolls the estate back.
 #
 # Only the cluster this creates is touched: it is `kind-$CLUSTER` and nothing
 # else, and it is deleted on exit unless --keep. Requires docker, kind, kubectl,
@@ -87,6 +90,8 @@ if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   [[ $REUSE == 1 ]] || { KEEP=1; fail "a kind cluster named $CLUSTER already exists; this script only uses one it created (--reuse to run on it again)"; }
   say "reusing kind cluster $CLUSTER"
   k -n "$NS" delete cutovers --all --ignore-not-found >/dev/null 2>&1 || true
+  # Journals an earlier run kept on purpose (run 4) would refuse this run's.
+  k -n "$NS" delete configmaps -l app.kubernetes.io/managed-by=acemq-infra-operator >/dev/null 2>&1 || true
   k -n "$NS" delete pod consumer --ignore-not-found >/dev/null 2>&1 || true
 else
   say "kind cluster $CLUSTER"
@@ -180,7 +185,7 @@ client() { k -n "$NS" exec toolbox -- python -u /client.py "$@"; }
 depth() { client depth "$1" "$QUEUE" | awk '{print $1}'; }
 consumers() { client depth "$1" "$QUEUE" | awk '{print $2}'; }
 
-cutover() { # name — a Cutover carrying deployment.yaml, credentials from the Secrets
+cutover() { # name [more spec] — a Cutover carrying deployment.yaml, credentials from the Secrets
   {
     cat <<EOF
 apiVersion: infra.acemq.org/v1alpha1
@@ -194,6 +199,7 @@ spec:
     - {name: BLUE_PASSWORD, secretKeyRef: {name: blue-default-user, key: password}}
     - {name: GREEN_USERNAME, secretKeyRef: {name: green-default-user, key: username}}
     - {name: GREEN_PASSWORD, secretKeyRef: {name: green-default-user, key: password}}
+${2:-}
   deployment: |
 EOF
     sed 's/^/    /' "$HERE/deployment.yaml"
@@ -319,8 +325,45 @@ expect "no shovel left on blue" "$(client shovels blue)" 0
 expect "no shovel left on green" "$(client shovels green)" 0
 RUN3="backlog=$BACKLOG killed-at-step='$(jq -r '.steps[-1] | "\(.number) \(.id) \(.status)"' <<<"$AT_KILL")' steps-after-restart=$(journal e2e-restart | jq '.steps | length') blue-after-rollback=$(depth blue) green-after-rollback=$(depth green)"
 
+# ------------------------------------------------------------------ 4. retained
+
+say "4. retained: a deleted Cutover keeps its journal, and a new one rolls back from it"
+reset_queues
+SEEDED=500
+client publish blue "$QUEUE" "$SEEDED"
+cutover e2e-retain
+wait_phase e2e-retain Planned 180
+approve e2e-retain "$(field e2e-retain planFingerprint)"
+wait_phase e2e-retain Completed 300
+expect "green after the cutover" "$(depth green)" "$SEEDED"
+k -n "$NS" delete cutover e2e-retain --timeout=120s >/dev/null
+cm() { k -n "$NS" get configmap e2e-retain-journal -o jsonpath="$1"; }
+sleep 10   # give the garbage collector the chance it must not take
+expect "the journal outlived its Cutover" "$(cm '{.metadata.labels.infra\.acemq\.org/retained}')" true
+expect "nothing owns it" "$(cm '{.metadata.ownerReferences}')" ""
+expect "it names the Cutover" "$(cm '{.metadata.labels.infra\.acemq\.org/cutover}')" e2e-retain
+echo "  reason: $(cm '{.metadata.annotations.infra\.acemq\.org/retained-reason}')"
+# The by-hand route in docs/operator.md: both keys come out as the CLI reads them.
+expect "the journal extracts" "$(cm '{.data.journal\.json}' | jq -r .outcome)" completed
+expect "the deployment file extracts verbatim" "$(cm '{.data.deployment\.yaml}' | shasum -a 256 | cut -c1-16)" \
+  "$(shasum -a 256 < "$HERE/deployment.yaml" | cut -c1-16)"
+cutover e2e-undo "  action: rollback
+  journalFrom: {configMapRef: {name: e2e-retain-journal}}"
+wait_phase e2e-undo RolledBack 300
+expect "blue after the rollback" "$(depth blue)" "$SEEDED"
+expect "green after the rollback" "$(depth green)" 0
+expect "the new Cutover took the journal" "$(cm '{.metadata.ownerReferences[0].name}')" e2e-undo
+expect "rollback outcome" "$(field e2e-undo rollbackOutcome)" completed
+k -n "$NS" delete cutover e2e-undo --timeout=120s >/dev/null
+for _ in $(seq 1 60); do
+  k -n "$NS" get configmap e2e-retain-journal >/dev/null 2>&1 || break; sleep 1
+done
+expect "a rolled-back journal goes with its Cutover" "$(k -n "$NS" get configmap e2e-retain-journal 2>/dev/null | wc -l | tr -d ' ')" 0
+RUN4="seeded=$SEEDED kept-after-delete=yes rolled-back-by=e2e-undo blue-after=$(depth blue) green-after=$(depth green)"
+
 say "passed"
 echo "  1. cutover : $RUN1"
 echo "  2. rollback: $RUN2"
 echo "  3. restart : $RUN3"
+echo "  4. retained: $RUN4"
 k -n "$NS" get cutovers
