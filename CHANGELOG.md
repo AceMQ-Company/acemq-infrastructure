@@ -22,6 +22,10 @@ gets built only if somebody asks with a real estate behind the ask.
   binds JSON into classes, so none was reachable from this tool's own code; they
   were reachable from the classpath, which is what gets scanned. The Java 17
   baseline and the native image's registration file are unchanged.
+- **`acemq-java-rabbitmq-admin` 0.1.1 → 0.1.2**, the release that made the
+  same Jackson move on its side, so the admin client and this tool resolve one
+  Jackson between them. No model class changed, so the native image's
+  registration file for the management API's JSON model still covers it.
 
 ## [0.4.0] - 2026-09-23
 

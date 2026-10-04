@@ -128,7 +128,7 @@
          tracks-the-release job in ci.yml now holds the other end: it fails when
          this number is behind the newest tag, which is how it was found sitting
          at 0.1.0 after 0.1.1 was published. -->
-    <acemq.admin.version>0.1.1</acemq.admin.version>
+    <acemq.admin.version>0.1.2</acemq.admin.version>
 
     <!-- Declared rather than inherited. acemq-java-rabbitmq-admin brings Jackson
          in transitively, and acemq-infra-execute genuinely needs it in its own
