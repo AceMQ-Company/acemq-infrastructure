@@ -17,10 +17,13 @@ metadata:
   namespace: acemq-infra-system
 ---
 # Cluster-wide, because Cutovers are reconciled in every namespace unless
-# WATCH_NAMESPACES narrows it. Read Secrets is the sharp edge: whoever may
-# create a Cutover in a namespace can have the operator present that
-# namespace's Secrets to a management URL of their choosing. Narrow it with
-# WATCH_NAMESPACES and namespaced RoleBindings where that matters.
+# WATCH_NAMESPACES narrows it. Read Secrets is the sharp edge, and the
+# operator narrows it itself: it reads only Secrets labelled
+# infra.acemq.org/credentials: "true" (anything else it asks for as metadata
+# only, and refuses), and it sends credentials only to hosts on
+# ACEMQ_INFRA_ALLOWED_URLS below. RBAC cannot express either, so narrow it
+# further with WATCH_NAMESPACES and namespaced RoleBindings where that
+# matters. docs/operator.md, Security.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -115,6 +118,12 @@ spec:
                   fieldPath: metadata.namespace
             # - name: WATCH_NAMESPACES
             #   value: "orders,payments"
+            # Where credentials may be sent: comma-separated host[:port]
+            # globs, checked against every cluster URL after ${VAR}
+            # substitution and before anything is dialled. Unset, it is the
+            # in-cluster Services below; "*" turns the check off.
+            - name: ACEMQ_INFRA_ALLOWED_URLS
+              value: "*.svc,*.svc.cluster.local"
           resources:
             requests:
               cpu: 100m

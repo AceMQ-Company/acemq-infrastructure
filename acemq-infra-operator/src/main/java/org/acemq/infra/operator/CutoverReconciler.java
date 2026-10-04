@@ -27,6 +27,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -38,6 +39,7 @@ import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
+import io.fabric8.kubernetes.api.model.PartialObjectMetadata;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.javaoperatorsdk.operator.api.reconciler.Cleaner;
@@ -95,6 +97,9 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
     static final String CUTOVER_UID = "infra.acemq.org/cutover-uid";
     static final String RETAINED_REASON = "infra.acemq.org/retained-reason";
 
+    /** The label a Secret needs before the operator reads anything in it but its metadata. */
+    static final String CREDENTIALS = "infra.acemq.org/credentials";
+
     private static final Set<String> RAN = Set.of(Cutover.COMPLETED, Cutover.FAILED,
             Cutover.INTERRUPTED);
 
@@ -104,9 +109,12 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
     private final KubernetesClient client;
     private final Engine engine;
 
-    CutoverReconciler(KubernetesClient client, Engine engine) {
+    private final Allowlist allowed;
+
+    CutoverReconciler(KubernetesClient client, Engine engine, Allowlist allowed) {
         this.client = client;
         this.engine = engine;
+        this.allowed = allowed;
     }
 
     @Override
@@ -271,6 +279,15 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
             work = Files.createTempDirectory("cutover-");
             Path file = work.resolve("deployment.yaml");
             Files.writeString(file, spec.deployment, StandardCharsets.UTF_8);
+            Optional<String> off = allowed.refusal(file, env);
+            if (off.isPresent()) {
+                write(cutover, s -> {
+                    s.phase = Cutover.REFUSED;
+                    s.message = off.get();
+                    s.observedGeneration = cutover.getMetadata().getGeneration();
+                });
+                return UpdateControl.noUpdate();
+            }
             plan = engine.plan(file, env, sources(cutover));
 
             if (!plan.ok()) {
@@ -379,6 +396,14 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
             Files.writeString(journalFile, stored.getData().get(JOURNAL_KEY),
                     StandardCharsets.UTF_8);
 
+            Optional<String> off = allowed.refusal(file, env);
+            if (off.isPresent()) {
+                write(cutover, s -> {
+                    s.phase = before;
+                    s.message = "the rollback was refused: " + off.get();
+                });
+                return UpdateControl.noUpdate();
+            }
             write(cutover, s -> {
                 s.phase = Cutover.ROLLING_BACK;
                 s.message = "the rollback is running.";
@@ -621,8 +646,7 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
         Map<String, String> env = new LinkedHashMap<>();
         for (Cutover.Variable variable : variablesOf(cutover)) {
             if (variable.secretKeyRef != null) {
-                Secret secret = client.secrets().inNamespace(namespace(cutover))
-                        .withName(variable.secretKeyRef.name).get();
+                Secret secret = secret(cutover, variable);
                 String encoded = secret == null || secret.getData() == null ? null
                         : secret.getData().get(variable.secretKeyRef.key);
                 if (encoded == null) {
@@ -639,6 +663,34 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
             }
         }
         return env;
+    }
+
+    /**
+     * The Secret a variable names, read whole only when its metadata carries the credentials
+     * label: a Cutover can name any Secret in its namespace, and the operator must not become a
+     * way to read the ones nobody meant for it. Null when there is no such Secret.
+     */
+    private Secret secret(Cutover cutover, Cutover.Variable variable) {
+        var ref = client.secrets().inNamespace(namespace(cutover))
+                .withName(variable.secretKeyRef.name);
+        PartialObjectMetadata metadata = ref.getAsPartialObjectMetadata();
+        if (metadata == null || metadata.getMetadata() == null) {
+            return null;
+        }
+        Secret secret = labelled(metadata.getMetadata().getLabels()) ? ref.get() : null;
+        if (secret == null || !labelled(secret.getMetadata().getLabels())) {
+            throw new IllegalArgumentException("variable " + variable.name + " reads Secret "
+                    + variable.secretKeyRef.name + " in namespace " + namespace(cutover)
+                    + ", which is not labelled " + CREDENTIALS + ": \"true\". The operator reads"
+                    + " only Secrets labelled for it; if this one is meant for cutovers, label it:"
+                    + " kubectl -n " + namespace(cutover) + " label secret "
+                    + variable.secretKeyRef.name + " " + CREDENTIALS + "=true");
+        }
+        return secret;
+    }
+
+    private static boolean labelled(Map<String, String> labels) {
+        return labels != null && "true".equals(labels.get(CREDENTIALS));
     }
 
     /** How each variable was given, for the fingerprint: the reference, never the secret. */

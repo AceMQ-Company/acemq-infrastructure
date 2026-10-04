@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,12 +27,16 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import com.sun.net.httpserver.HttpServer;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
+import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
 
 import org.acemq.infra.execute.Journal;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,6 +60,7 @@ class CutoverReconcilerTest {
               {"number":2,"index":1,"id":"drain-messages","status":"started"}]}""";
 
     KubernetesClient client;
+    KubernetesMockServer server;
 
     private Recorder engine;
     private CutoverReconciler reconciler;
@@ -62,7 +68,7 @@ class CutoverReconcilerTest {
     @BeforeEach
     void setUp() {
         engine = new Recorder();
-        reconciler = new CutoverReconciler(client, engine);
+        reconciler = new CutoverReconciler(client, engine, Allowlist.parse(null));
     }
 
     @Test
@@ -213,7 +219,8 @@ class CutoverReconcilerTest {
     void secrets() {
         client.resource(new SecretBuilder()
                 .withMetadata(new ObjectMetaBuilder().withName("blue-default-user")
-                        .withNamespace(NS).build())
+                        .withNamespace(NS)
+                        .addToLabels(CutoverReconciler.CREDENTIALS, "true").build())
                 .addToData("password", Base64.getEncoder()
                         .encodeToString("s3cr3t".getBytes(StandardCharsets.UTF_8)))
                 .build()).create();
@@ -337,6 +344,94 @@ class CutoverReconcilerTest {
         assertThat(status("planning").message).contains("action: rollback");
         assertThat(engine.plans).isEqualTo(plans);
         assertThat(engine.rollbacks).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a Secret without the credentials label is refused, by name and label, and only"
+            + " its metadata is ever asked for")
+    void unlabelledSecret() throws InterruptedException {
+        client.resource(new SecretBuilder()
+                .withMetadata(new ObjectMetaBuilder().withName("plain").withNamespace(NS)
+                        .addToLabels(CutoverReconciler.CREDENTIALS, "yes").build())
+                .addToData("password", Base64.getEncoder()
+                        .encodeToString("s3cr3t".getBytes(StandardCharsets.UTF_8)))
+                .build()).create();
+        int before = server.getRequestCount();
+        for (int i = 0; i < before; i++) {
+            server.takeRequest();
+        }
+        Cutover cutover = cutover("orders");
+        cutover.getSpec().variables = List.of(variable("PASSWORD", "plain", "password"));
+        client.resource(cutover).create();
+        reconcile("orders");
+
+        Cutover.Status status = status("orders");
+        assertThat(status.phase).isEqualTo(Cutover.REFUSED);
+        assertThat(status.message).contains("plain")
+                .contains(CutoverReconciler.CREDENTIALS + ": \"true\"").doesNotContain("s3cr3t");
+        assertThat(engine.plans).isZero();
+        List<String> secretReads = new ArrayList<>();
+        for (int i = server.getRequestCount() - before; i > 0; i--) {
+            var request = server.takeRequest();
+            if (request.getPath().contains("/secrets/plain")) {
+                secretReads.add(request.getMethod() + " " + request.getHeader("Accept"));
+            }
+        }
+        assertThat(secretReads).isNotEmpty()
+                .allSatisfy(read -> assertThat(read).contains("as=PartialObjectMetadata"));
+    }
+
+    @Test
+    @DisplayName("a management URL off the allowlist is refused before any request reaches it, on"
+            + " plan and on rollback; on the allowlist it is asked")
+    void allowlist() throws IOException {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer broker = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        broker.createContext("/", exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(401, -1);
+            exchange.close();
+        });
+        broker.start();
+        try {
+            int port = broker.getAddress().getPort();
+            String deployment = Files.readString(Path.of("../scripts/operator-e2e/deployment.yaml"))
+                    .replaceAll("(blue|green)\\.acemq-infra-e2e\\.svc:15672", "127.0.0.1:" + port)
+                    .replaceAll("(blue|green)\\.acemq-infra-e2e\\.svc:5672", "127.0.0.1:5781");
+            List<Cutover.Variable> variables = List.of(literal("BLUE_USERNAME", "u"),
+                    literal("BLUE_PASSWORD", "p"), literal("GREEN_USERNAME", "u"),
+                    literal("GREEN_PASSWORD", "p"));
+            CutoverReconciler strict = new CutoverReconciler(client, new Engine.Rabbit(),
+                    Allowlist.parse(null));
+
+            Cutover planned = cutover("planned");
+            planned.getSpec().deployment = deployment;
+            planned.getSpec().variables = variables;
+            client.resource(planned).create();
+            strict.handle(fetch("planned"));
+            assertThat(status("planned").phase).isEqualTo(Cutover.REFUSED);
+            assertThat(status("planned").message).contains("127.0.0.1:" + port)
+                    .contains(Allowlist.ENV).contains("nothing was sent");
+
+            Cutover undone = cutover("undone");
+            undone.getSpec().deployment = deployment;
+            undone.getSpec().variables = variables;
+            undone.getSpec().action = Cutover.ROLLBACK;
+            client.resource(undone).create();
+            setPhase("undone", Cutover.COMPLETED);
+            storeJournal("undone", RUNNING_AT_DRAIN);
+            strict.handle(fetch("undone"));
+            assertThat(status("undone").phase).isEqualTo(Cutover.COMPLETED);
+            assertThat(status("undone").message).contains(Allowlist.ENV);
+            assertThat(requests.get()).isZero();
+
+            new CutoverReconciler(client, new Engine.Rabbit(), Allowlist.parse("127.0.0.1"))
+                    .handle(fetch("planned"));
+            assertThat(requests.get()).isPositive();
+            assertThat(status("planned").message).doesNotContain(Allowlist.ENV);
+        } finally {
+            broker.stop(0);
+        }
     }
 
     // ---------------------------------------------------------------- the fake engine

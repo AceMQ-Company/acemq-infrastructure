@@ -11,6 +11,24 @@ on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
 
 ### Changed
 
+- **Behaviour change — the operator reads only Secrets labelled
+  `infra.acemq.org/credentials: "true"`.** Existing Secrets that Cutovers
+  reference need the label before upgrading, or those Cutovers are `Refused`
+  with a message naming the Secret and the label:
+  `kubectl -n <ns> label secret <name> infra.acemq.org/credentials=true`. A
+  Secret is first fetched as metadata only; an unlabelled one's data is never
+  requested. Before this, anyone who could create a Cutover could have the
+  operator read any Secret in that namespace.
+- **Behaviour change — credentials go only to allowlisted hosts.** Every
+  cluster's `management` and `amqp` URL, after variable substitution, must
+  match `ACEMQ_INFRA_ALLOWED_URLS` on the operator (comma-separated
+  `host[:port]` globs) before anything is dialled, on plan and on rollback.
+  The default is in-cluster Services only, `*.svc,*.svc.cluster.local`, so a
+  Cutover naming a short Service name, an IP, or anything outside the cluster
+  is now `Refused` until the URL is qualified or the allowlist widened (`*`
+  turns the check off). `deploy/operator.yaml` sets the default explicitly.
+  [Security](docs/operator.md#security) has the details and what remains.
+
 - **A Cutover's journal outlives it when it is still needed.** Deleting a
   Cutover used to delete its journal ConfigMap through the owner reference,
   and with it the only record of how to undo the run. The operator now holds

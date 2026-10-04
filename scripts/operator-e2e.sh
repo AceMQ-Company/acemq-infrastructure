@@ -22,6 +22,9 @@
 #   4. retained  a completed Cutover is deleted. Its journal must outlive it,
 #                detached and labelled; a new Cutover adopts it through
 #                spec.journalFrom and rolls the estate back.
+#   5. refusals  a Secret without the infra.acemq.org/credentials label, and a
+#                management URL off the operator's allowlist, are both refused
+#                into status and nothing runs.
 #
 # Only the cluster this creates is touched: it is `kind-$CLUSTER` and nothing
 # else, and it is deleted on exit unless --keep. Requires docker, kind, kubectl,
@@ -39,6 +42,7 @@ CLIENT_IMAGE=acemq-infra-e2e-client:dev
 QUEUE=orders.new
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$ROOT/scripts/operator-e2e"
+WORK="$(mktemp -d)"
 
 KEEP=0
 BUILD=1
@@ -66,6 +70,7 @@ expect() { # description actual expected
 
 cleanup() {
   local status=$?
+  rm -rf "$WORK"
   if [[ $KEEP == 1 ]]; then
     echo "kept: kind cluster $CLUSTER (kind delete cluster --name $CLUSTER)"
   else
@@ -146,6 +151,10 @@ for colour in blue green; do
   k -n "$NS" wait --for=condition=AllReplicasReady "rabbitmqcluster/$colour" --timeout=10m
 done
 
+# The operator reads only Secrets labelled for it; these are the ones the
+# Cutovers below name.
+k -n "$NS" label secret blue-default-user green-default-user infra.acemq.org/credentials=true --overwrite >/dev/null
+
 say "the operator"
 k apply -f "$ROOT/deploy/crd.yaml" >/dev/null
 # The manifest names the published image; the run uses the one just built and
@@ -202,7 +211,7 @@ spec:
 ${2:-}
   deployment: |
 EOF
-    sed 's/^/    /' "$HERE/deployment.yaml"
+    sed 's/^/    /' "${DEPLOYMENT:-$HERE/deployment.yaml}"
   } | k apply -f - >/dev/null
 }
 field() { k -n "$NS" get cutover "$1" -o jsonpath="{.status.$2}"; }
@@ -361,9 +370,35 @@ done
 expect "a rolled-back journal goes with its Cutover" "$(k -n "$NS" get configmap e2e-retain-journal 2>/dev/null | wc -l | tr -d ' ')" 0
 RUN4="seeded=$SEEDED kept-after-delete=yes rolled-back-by=e2e-undo blue-after=$(depth blue) green-after=$(depth green)"
 
+# ------------------------------------------------------------------ 5. refusals
+
+say "5. refusals: an unlabelled Secret, and a URL off the allowlist"
+k -n "$NS" create secret generic e2e-unlabelled --from-literal=password=not-for-cutovers \
+  --dry-run=client -o yaml | k apply -f - >/dev/null
+cutover e2e-unlabelled "    - {name: BLUE_PASSWORD, secretKeyRef: {name: e2e-unlabelled, key: password}}"
+wait_phase e2e-unlabelled Refused 120
+MESSAGE=$(field e2e-unlabelled message)
+echo "  message: $MESSAGE"
+expect "the refusal names the label" "$([[ "$MESSAGE" == *'infra.acemq.org/credentials: "true"'* ]] && echo yes)" yes
+expect "and the Secret" "$([[ "$MESSAGE" == *e2e-unlabelled* ]] && echo yes)" yes
+expect "no plan was made" "$(field e2e-unlabelled planFingerprint)" ""
+# Not a fully qualified Service name, so not under the default *.svc — and
+# still a real, reachable broker, so only the allowlist stands in the way.
+sed 's/\.acemq-infra-e2e\.svc:/.acemq-infra-e2e:/' "$HERE/deployment.yaml" > "$WORK/off-allowlist.yaml"
+DEPLOYMENT="$WORK/off-allowlist.yaml" cutover e2e-off-allowlist
+wait_phase e2e-off-allowlist Refused 120
+MESSAGE=$(field e2e-off-allowlist message)
+echo "  message: $MESSAGE"
+expect "the refusal names the allowlist" "$([[ "$MESSAGE" == *ACEMQ_INFRA_ALLOWED_URLS* ]] && echo yes)" yes
+expect "no plan was made" "$(field e2e-off-allowlist planFingerprint)" ""
+expect "no journal for either" "$(k -n "$NS" get configmap e2e-unlabelled-journal e2e-off-allowlist-journal 2>/dev/null | wc -l | tr -d ' ')" 0
+k -n "$NS" delete cutover e2e-unlabelled e2e-off-allowlist --timeout=120s >/dev/null
+RUN5="unlabelled-secret=Refused off-allowlist-url=Refused"
+
 say "passed"
 echo "  1. cutover : $RUN1"
 echo "  2. rollback: $RUN2"
 echo "  3. restart : $RUN3"
 echo "  4. retained: $RUN4"
+echo "  5. refusals: $RUN5"
 k -n "$NS" get cutovers

@@ -330,19 +330,62 @@ records management URLs with any credentials stripped, as it always has.
 
 The RabbitMQ Cluster Operator writes a `<cluster>-default-user` Secret beside
 every `RabbitmqCluster`, with `username` and `password` keys, and those are the
-natural references. That is a convenience, not a dependency: **nothing here
-reads a RabbitMQ Cluster Operator resource.** A cluster is a management URL and
-a Secret, whether it is a `RabbitmqCluster`, a StatefulSet somebody wrote by
-hand, or a VM outside Kubernetes altogether — which keeps the second objection
-in [language and shape](shape.md), another project's resource model becoming
-part of this tool's contract, from applying.
+natural references — once labelled for the operator (below). That is a
+convenience, not a dependency: **nothing here reads a RabbitMQ Cluster Operator
+resource.** A cluster is a management URL and a Secret, whether it is a
+`RabbitmqCluster`, a StatefulSet somebody wrote by hand, or a VM outside
+Kubernetes altogether — which keeps the second objection in
+[language and shape](shape.md), another project's resource model becoming part
+of this tool's contract, from applying.
 
-The sharp edge is RBAC. The operator can read Secrets in every namespace it
-watches, and a Cutover names the URL it sends them to. **Whoever can create a
-Cutover in a namespace can make the operator present that namespace's Secrets
-to a server of their choosing**, so treat `create` on `cutovers` as equivalent
-to `get` on `secrets`. Set `WATCH_NAMESPACES` (comma-separated) on the
-Deployment to reconcile only the namespaces that need it.
+## Security
+
+The operator can `get` Secrets in every namespace it watches, and a Cutover
+names the URLs it presents them to. Left at that, whoever can create a Cutover
+in a namespace could have the operator send that namespace's Secrets to a server
+of their choosing. Two checks stand in the way, and both are the operator's
+own, because RBAC can express neither:
+
+1. **Only labelled Secrets are read.** A Secret a Cutover names is first asked
+   for as metadata only (`PartialObjectMetadata`; its data never reaches the
+   operator). Unless it carries the label `infra.acemq.org/credentials: "true"`,
+   the Cutover is `Refused` with a message naming the Secret and the label, and
+   nothing more is read. Label the ones meant for cutovers:
+
+   ```console
+   $ kubectl -n orders label secret blue-default-user green-default-user \
+       infra.acemq.org/credentials=true
+   ```
+
+2. **Credentials go only to allowed hosts.** Every cluster's `management` and
+   `amqp` URL, after `${VAR}` substitution, must match the operator's
+   allowlist before anything is dialled — before the plan's probe and before a
+   rollback, so no request carrying credentials is made to a host off it. A
+   Cutover that names one is `Refused` (a rollback keeps its phase) with the
+   URL, credentials redacted, and the allowlist in `status.message`. The
+   allowlist is the operator's environment, not the resource's:
+
+   | `ACEMQ_INFRA_ALLOWED_URLS` | Allows |
+   |---|---|
+   | unset (the default) | `*.svc,*.svc.cluster.local`: in-cluster Services by their qualified names |
+   | `*.svc,rabbit-*.prod.internal:15672,10.0.4.?` | those too: `host[:port]` globs, comma-separated |
+   | `*` | anything — the check is off |
+
+   `*` matches any run of characters, dots included, and `?` one; a pattern
+   without a port matches every port, and a URL without one has its scheme's
+   default. A short Service name such as `http://blue:15672` is not under
+   `*.svc`: write `blue.<namespace>.svc`.
+
+What remains is RBAC's: treat `create` on `cutovers` as `get` on the labelled
+Secrets of that namespace, since a Cutover can still present them to any
+allowed host. Set `WATCH_NAMESPACES` (comma-separated) on the Deployment to
+reconcile only the namespaces that need it.
+
+A deployment file's endpoint hook (`endpoint.kind: hook`) runs as a process
+inside the operator's pod, with its service account. Whoever can
+create a Cutover can run a command there, and that is not narrowed by either
+check above. Until it is, give `create` on `cutovers` only to those you would
+give the operator's own permissions.
 
 ## What it does not do
 
@@ -363,9 +406,11 @@ nothing however often it is reconciled, a journal with no status to explain it,
 rollback from `Interrupted`, a refused rollback asked again, an interrupted
 rollback, a deleted Cutover keeping a journal that was not rolled back (twice,
 to the same result) and letting go of one that was, a new Cutover rolling back
-from a kept journal once and taking it, the refusals of `journalFrom`, and
-Secret resolution that names a missing Secret and never shows a
-value.
+from a kept journal once and taking it, the refusals of `journalFrom`,
+Secret resolution that names a missing Secret and never shows a value, an
+unlabelled Secret refused with only its metadata ever requested, and a URL off
+the allowlist refused on plan and on rollback while a local HTTP server
+standing in for the broker counts zero requests.
 
 `scripts/operator-e2e.sh` runs it for real, on a kind cluster it creates and
 deletes: the RabbitMQ Cluster Operator, two `RabbitmqCluster`s, the operator
@@ -374,4 +419,5 @@ counted message by message; a cutover rolled back through `spec.action`; and
 the operator pod killed without grace while the drain runs, which has to come
 back `Interrupted` with the journal untouched and then roll back; and a
 completed Cutover deleted, its journal kept and then rolled back by a new
-Cutover through `journalFrom`. CI runs it on every push.
+Cutover through `journalFrom`; and an unlabelled Secret and a URL off the
+allowlist, both refused. CI runs it on every push.
