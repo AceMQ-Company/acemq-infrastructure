@@ -9,6 +9,20 @@ suite runs against it rather than against the jar. That completes the roadmap's
 mandatory phases. [Phase 5](docs/roadmap.md), the operator, is conditional and
 gets built only if somebody asks with a real estate behind the ask.
 
+## [Unreleased]
+
+### Security
+
+- **Jackson 2.18.9 → 2.22.3**, imported as `jackson-bom` the way
+  `acemq-java-amqp` does it rather than pinned on `jackson-databind` alone.
+  Closes three advisories against `jackson-databind` below 2.18.10: an unbounded
+  number parse in `Duration` / `XMLGregorianCalendar` deserialization (high), a
+  path deserialization with no scheme allowlist, and `Comparable` missing from
+  the polymorphic-type denylist. Nothing here deserializes polymorphically or
+  binds JSON into classes, so none was reachable from this tool's own code; they
+  were reachable from the classpath, which is what gets scanned. The Java 17
+  baseline and the native image's registration file are unchanged.
+
 ## [0.4.0] - 2026-09-23
 
 ### Added

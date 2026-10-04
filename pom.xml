@@ -136,9 +136,16 @@
          and the management API's statistics have to be read out of JSON that the
          admin client does not model. Depending on somebody else's transitive
          dependency for that is how a library bump becomes a compile error in a
-         module that never asked for it. The number matches what the admin client
-         resolves today, so this pins rather than upgrades. -->
-    <jackson.version>2.18.9</jackson.version>
+         module that never asked for it.
+
+         2.22.3, level with acemq-java-amqp, and above what the admin client asks
+         for: 2.18.9 carried three open advisories against jackson-databind (one
+         high, a number-parse DoS), all fixed from 2.18.10. Jackson 2 still targets
+         Java 8, so the Java 17 baseline is untouched, and nothing here binds JSON
+         into classes by reflection — the execute module reads and writes the tree
+         model — so the native image's registration file, which names the admin
+         client's own model and no Jackson type, needs nothing new. -->
+    <jackson.version>2.22.3</jackson.version>
 
     <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
     <maven.failsafe.plugin.version>3.5.2</maven.failsafe.plugin.version>
@@ -165,10 +172,17 @@
         <artifactId>snakeyaml</artifactId>
         <version>${snakeyaml.version}</version>
       </dependency>
+      <!-- The whole family from one import, the way acemq-java-amqp does it, and
+           not one property applied per artifact: the family stopped sharing a
+           version line (jackson-annotations has no 2.22.x), so a single number
+           pinned on databind alone would leave core and annotations at whatever the
+           admin client drags in. The BOM keeps the three in step. -->
       <dependency>
-        <groupId>com.fasterxml.jackson.core</groupId>
-        <artifactId>jackson-databind</artifactId>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
         <version>${jackson.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
       </dependency>
       <dependency>
         <groupId>org.testcontainers</groupId>
