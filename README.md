@@ -30,7 +30,11 @@ clusters**.
 > against the binary rather than against the jar — on every push, on both Linux
 > architectures, and again before a release publishes anything. `0.5.0` adds
 > `acemq-infra rollback`: `apply` keeps a journal, and the rollback runs from it
-> through the binary and the Action. See [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
+> through the binary and the Action. Unreleased: [the operator](docs/operator.md)
+> ([phase 5](docs/roadmap.md)) runs the same cutover from a `Cutover` resource —
+> the plan in status, approval by fingerprint, the journal in a ConfigMap, and a
+> controller restart that marks the run `Interrupted` instead of resuming it.
+> See [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
 > the build order and [the library](docs/library.md) for what exists today.
 
 The five AceMQ client libraries already do the client half of a cutover — drain,
@@ -119,7 +123,7 @@ has the details and the journal format.
 | Question | Answer | Where |
 |---|---|---|
 | Java or Go? | **Java 17**, distributed as a GraalVM native image. `acemq-java-rabbitmq-admin` already implements every RabbitMQ operation a cutover needs, tested against a real broker | [Language and shape](docs/shape.md) |
-| Library, CLI or operator? | **A core library and a CLI over it, in one release.** An operator later, or never — they are layers, not alternatives | [Language and shape](docs/shape.md) |
+| Library, CLI or operator? | **A core library and a CLI over it, in one release.** The operator came later, as a layer over the same CLI — they are layers, not alternatives | [Language and shape](docs/shape.md), [the operator](docs/operator.md) |
 | How broker-agnostic, really? | Nine intent-level verbs and a capability set. RabbitMQ is the only provider and the capability model earns its place on that one broker | [Broker-agnostic, honestly](docs/broker-agnostic.md) |
 | Blue/green vs canary? | **Different operations, not one with a flag.** A broker canary is not a traffic split — a percentage partitions the queue | [Blue/green](docs/blue-green.md), [Canary](docs/canary.md) |
 | What makes this hard? | Message state. Unacked deliveries, shovels that consume, stream offsets that cannot travel, and no atomic cutover | [Message state](docs/message-state.md) |

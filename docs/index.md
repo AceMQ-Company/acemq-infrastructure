@@ -35,6 +35,7 @@ cluster**. That is what this is for.
 | [Message state](message-state.md) | The hard parts, named: in-flight, unacked, durable data, stream offsets, shovels that consume |
 | [Configuration](configuration.md) | The proposed format, evolved from the one that already worked |
 | [The library](library.md) | What is built so far, the types it exposes, and what has deliberately been left |
+| [The operator](operator.md) | A `Cutover` resource: the plan in status, approval by name, the journal in a ConfigMap, and a restart that never resumes a drain |
 | [Roadmap](roadmap.md) | The phased build order and what milestone one actually delivers |
 | [Prior art](prior-art.md) | What came out of the C# implementation, and what was deliberately left there |
 

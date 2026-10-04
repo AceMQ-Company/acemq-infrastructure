@@ -6,10 +6,39 @@ All notable changes to this repository are recorded here. The format follows
 
 `0.4.0` is released: [phase 4](docs/roadmap.md) — the tool is a binary, and the
 suite runs against it rather than against the jar. That completes the roadmap's
-mandatory phases. [Phase 5](docs/roadmap.md), the operator, is conditional and
-gets built only if somebody asks with a real estate behind the ask.
+mandatory phases. [Phase 5](docs/roadmap.md), the operator, was asked for and
+is built; it is under Unreleased below.
 
 ## [Unreleased]
+
+### Added
+
+- **The operator: `acemq-infra-operator`, phase 5.** A `Cutover` custom resource
+  (`infra.acemq.org/v1alpha1`) carries the deployment file verbatim in
+  `spec.deployment`, with `${VAR}` values from literals or Secret references in
+  its own namespace. The operator plans into `status.plan` and
+  `status.planFingerprint` and applies only when `spec.approve` names the plan
+  as it is when probed again — a stale approval is refused and nothing is
+  written; `spec.dryRun` plans and never applies. `apply` and `rollback` run
+  through the CLI's own `Cli` class with `--yes`, so the refusals, gates and
+  journal are the CLI's. Every journal write is copied synchronously into a
+  ConfigMap owned by the resource. A reconcile that finds `Applying` marks the
+  resource `Interrupted`, names the last step the journal records and runs
+  nothing; there is no resume. `spec.action: rollback` undoes a `Completed`,
+  `Failed` or `Interrupted` run through `Rollbacks.derive` and the journal, with
+  the CLI's refusals, and is asked again while a forward drain is still
+  running. One elected controller. The CRD is generated from the model and
+  shipped with RBAC and a Deployment in `deploy/`; the image is built from
+  `acemq-infra-operator/Dockerfile` and not yet published.
+  [The operator](docs/operator.md) has the details.
+- **`Journal.Mirror`:** a second, synchronous copy of every journal write, and
+  `Cli.mirroringJournalsTo` to set one. A failing first copy stops the run
+  starting, as an unwritable file does. `Brokers` is public so `Cli` can be
+  driven from another module.
+- **`scripts/operator-e2e.sh`:** the operator on a kind cluster it creates and
+  deletes — the RabbitMQ Cluster Operator, two `RabbitmqCluster`s, a counted
+  cutover, a rollback through the resource, and the operator killed mid-drain.
+  CI runs it on every push.
 
 ## [0.5.0] - 2026-10-04
 

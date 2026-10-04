@@ -176,6 +176,13 @@ So: an operator if and when somebody asks for it with a real estate behind the
 ask, built on the same core, sharing the same configuration schema. Not first,
 and possibly not ever.
 
+It was asked for, after the CLI shipped, and [the operator](operator.md) is the
+answer to these three objections rather than a way round them. The first: one
+resource is one run, the journal in a ConfigMap is the state, and a restart that
+finds a run in progress marks it `Interrupted` and resumes nothing. The second:
+a cluster is a management URL and a Secret, and nothing reads a Cluster Operator
+resource. The third still holds, which is why the binary remains the product.
+
 ### What ships first
 
 **The library and the CLI together, in this repository, in one release.** A CLI

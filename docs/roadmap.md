@@ -179,16 +179,38 @@ where it started with the duplicate count the binary printed measured for real.
 [Blue/green](blue-green.md#running-it-the-journal-and-acemq-infra-rollback) has
 the journal format.
 
-## Phase 5 — the operator, conditionally
+## Phase 5 — the operator ✅ (unreleased)
 
-Only if somebody asks with a real estate behind the ask. Same core library, same
-configuration schema, a reconcile loop and a CRD. The design problem to solve
-first is stated in [language and shape](shape.md): a cutover is a process with a
-deliberately half-moved middle, and reconciliation is a bad model for that. A
-controller restart must not restart a drain.
+Asked for, and built: [the operator](operator.md). Same core library — it drives
+the CLI's own `Cli` class — and the same configuration schema, verbatim, in a
+`Cutover` resource's `spec.deployment`. The design problem stated in
+[language and shape](shape.md) was solved before anything else was written:
 
-If nobody asks, this does not get built, and that is a successful outcome rather
-than an incomplete one.
+- **A cutover is a process, not desired state.** One `Cutover` is one run:
+  planned, approved, applied once, rolled back at most once. Nothing reconciles
+  towards a target.
+- **The journal is the state.** Every journal write is copied synchronously into
+  a ConfigMap owned by the resource, with each step recorded as `started`
+  before it touches a broker.
+- **A controller restart does not restart a drain.** The phase is written as
+  `Applying` before the run starts; a reconcile that finds it marks the resource
+  `Interrupted`, names the last step the journal records, and runs nothing. A
+  journal ConfigMap with no status to explain it is never run over. There is no
+  resume: a human rolls back through `spec.action: rollback` — the same
+  `Rollbacks.derive`, journal and refusals as `acemq-infra rollback` — or
+  finishes by hand.
+- **Approval replaces the typed `yes`:** the plan and its fingerprint go into
+  status, and the run starts only when `spec.approve` names the plan as it is
+  when probed again.
+- **No Cluster Operator CRD in the contract.** A cluster is a management URL and
+  a Secret reference.
+
+**Done when** the state machine is tested against a mock API server, and the
+whole thing is run on a real cluster — two `RabbitmqCluster`s, a cutover counted
+message by message, a rollback through the resource, and the operator killed
+without grace mid-drain coming back `Interrupted` with the journal untouched.
+`scripts/operator-e2e.sh` does that on a kind cluster it creates and deletes,
+and CI runs it on every push.
 
 ## What is explicitly not on this roadmap
 
