@@ -107,8 +107,8 @@ for attempt in $(seq 1 12); do
 done
 k -n rabbitmq-system rollout status deploy/rabbitmq-cluster-operator --timeout=5m
 k create namespace "$NS" --dry-run=client -o yaml | k apply -f - >/dev/null
-for colour in blue green; do
-  k apply -f - >/dev/null <<EOF
+rabbitmq_cluster() {
+  cat <<EOF
 apiVersion: rabbitmq.com/v1beta1
 kind: RabbitmqCluster
 metadata:
@@ -124,6 +124,15 @@ spec:
   rabbitmq:
     additionalPlugins: [rabbitmq_shovel, rabbitmq_shovel_management]
 EOF
+}
+# Retried for the same reason: the Cluster Operator's own webhook refuses
+# connections for a moment after its Deployment reports ready.
+for colour in blue green; do
+  for attempt in $(seq 1 12); do
+    rabbitmq_cluster | k apply -f - >/dev/null && break
+    [[ $attempt == 12 ]] && fail "RabbitmqCluster $colour would not apply"
+    sleep 10
+  done
 done
 for colour in blue green; do
   for _ in $(seq 1 120); do
