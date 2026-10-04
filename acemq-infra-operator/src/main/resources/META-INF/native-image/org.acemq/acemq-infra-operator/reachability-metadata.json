@@ -1,0 +1,1896 @@
+{
+  "comment": [
+    "What the operator reaches by reflection beyond what NativeImageFeature registers (every class of fabric8's core, common and coordination models, and the Cutover resource) and what acemq-infra-rabbitmq's own file registers (the admin client's model, repeated here harmlessly).",
+    "",
+    "Recorded, not written: GraalVM's tracing agent ran the JVM operator through the whole of scripts/operator-e2e.sh on kind -- plan, approve, apply, rollback, a pod killed mid-drain, a deleted Cutover's journal kept and adopted, the Secret and allowlist refusals -- and this is its output with the Feature's classes removed. Most of it is the JDK's TLS and fabric8 resolving every KubernetesResource its ServiceLoader names; the rest is JOSDK instantiating its default retry and rate limiter, and the fabric8 client building itself.",
+    "",
+    "To record it again after a dependency changes: build Dockerfile.agent (the JVM image on a GraalVM JDK with the agent on), run ./scripts/operator-e2e.sh --keep --no-build with E2E_OPERATOR_IMAGE naming it, kubectl cp /tmp/agent out of the operator pod, and drop the entries NativeImageFeature covers. Then the e2e with --native is the check that nothing is missing."
+  ],
+  "reflection": [
+    {
+      "type": "com.fasterxml.jackson.databind.deser.BeanDeserializerModifier[]"
+    },
+    {
+      "type": "com.fasterxml.jackson.databind.deser.Deserializers[]"
+    },
+    {
+      "type": "com.fasterxml.jackson.databind.deser.KeyDeserializers[]"
+    },
+    {
+      "type": "com.fasterxml.jackson.databind.deser.ValueInstantiators[]"
+    },
+    {
+      "type": "com.fasterxml.jackson.databind.ext.Java7SupportImpl",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.fasterxml.jackson.databind.ser.BeanSerializerModifier[]"
+    },
+    {
+      "type": "com.fasterxml.jackson.databind.ser.Serializers[]"
+    },
+    {
+      "type": "com.sun.crypto.provider.AESCipher$General",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.ARCFOURCipher",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.ChaCha20Cipher$ChaCha20Poly1305",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.DESCipher",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.DESedeCipher",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.DHParameters",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.GaloisCounterMode$AESGCM",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.HKDFKeyDerivation$HKDFSHA256",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "javax.crypto.KDFParameters"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.HmacCore$HmacSHA256",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.TlsMasterSecretGenerator",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.builder.Editable"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admission.v1.AdmissionReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admission.v1beta1.AdmissionReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.MutatingAdmissionPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.MutatingAdmissionPolicyBinding"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.MutatingAdmissionPolicyBindingList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.MutatingAdmissionPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.MutatingWebhookConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.MutatingWebhookConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.ValidatingAdmissionPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.ValidatingAdmissionPolicyBinding"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.ValidatingAdmissionPolicyBindingList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.ValidatingAdmissionPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.ValidatingWebhookConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1.ValidatingWebhookConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1alpha1.MutatingAdmissionPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1alpha1.MutatingAdmissionPolicyBinding"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1alpha1.MutatingAdmissionPolicyBindingList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1alpha1.MutatingAdmissionPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.MutatingAdmissionPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.MutatingAdmissionPolicyBinding"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.MutatingAdmissionPolicyBindingList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.MutatingAdmissionPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.MutatingWebhookConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.MutatingWebhookConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.ValidatingWebhookConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.admissionregistration.v1beta1.ValidatingWebhookConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apiextensions.v1.ConversionReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apiextensions.v1beta1.CustomResourceDefinition"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apiextensions.v1beta1.CustomResourceDefinitionList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.ControllerRevision"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.ControllerRevisionList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.DaemonSet"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.DaemonSetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.Deployment"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.DeploymentList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.ReplicaSet"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.ReplicaSetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.StatefulSet"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.apps.StatefulSetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authentication.SelfSubjectReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authentication.TokenRequest"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authentication.TokenReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authentication.v1beta1.TokenReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.LocalSubjectAccessReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.NonResourceRule",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "setNonResourceURLs",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        },
+        {
+          "name": "setVerbs",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.ResourceRule",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "setApiGroups",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        },
+        {
+          "name": "setResources",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        },
+        {
+          "name": "setVerbs",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectAccessReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectRulesReview",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "getAdditionalProperties",
+          "parameterTypes": []
+        },
+        {
+          "name": "getApiVersion",
+          "parameterTypes": []
+        },
+        {
+          "name": "getKind",
+          "parameterTypes": []
+        },
+        {
+          "name": "getMetadata",
+          "parameterTypes": []
+        },
+        {
+          "name": "getSpec",
+          "parameterTypes": []
+        },
+        {
+          "name": "getStatus",
+          "parameterTypes": []
+        },
+        {
+          "name": "setApiVersion",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "setKind",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "setMetadata",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.api.model.ObjectMeta"
+          ]
+        },
+        {
+          "name": "setSpec",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectRulesReviewSpec"
+          ]
+        },
+        {
+          "name": "setStatus",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.api.model.authorization.v1.SubjectRulesReviewStatus"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectRulesReviewList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.SelfSubjectRulesReviewSpec",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "getAdditionalProperties",
+          "parameterTypes": []
+        },
+        {
+          "name": "getNamespace",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.SubjectAccessReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1.SubjectRulesReviewStatus",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "setIncomplete",
+          "parameterTypes": [
+            "java.lang.Boolean"
+          ]
+        },
+        {
+          "name": "setNonResourceRules",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        },
+        {
+          "name": "setResourceRules",
+          "parameterTypes": [
+            "java.util.List"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1beta1.LocalSubjectAccessReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1beta1.SelfSubjectAccessReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1beta1.SelfSubjectRulesReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.authorization.v1beta1.SubjectAccessReview"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v1.HorizontalPodAutoscaler"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v1.HorizontalPodAutoscalerList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v1.Scale"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v2.HorizontalPodAutoscaler"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v2.HorizontalPodAutoscalerList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v2beta1.HorizontalPodAutoscaler"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v2beta1.HorizontalPodAutoscalerList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v2beta2.HorizontalPodAutoscaler"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.autoscaling.v2beta2.HorizontalPodAutoscalerList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.batch.v1.CronJob"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.batch.v1.CronJobList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.batch.v1.Job"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.batch.v1.JobList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.batch.v1beta1.CronJob"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.batch.v1beta1.CronJobList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1.CertificateSigningRequest"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1.CertificateSigningRequestList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1.ClusterTrustBundle"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1.ClusterTrustBundleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1.PodCertificateRequest"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1.PodCertificateRequestList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1beta1.CertificateSigningRequest"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1beta1.CertificateSigningRequestList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1beta1.ClusterTrustBundle"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1beta1.ClusterTrustBundleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1beta1.PodCertificateRequest"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.certificates.v1beta1.PodCertificateRequestList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.discovery.v1.EndpointSlice"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.discovery.v1.EndpointSliceList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.discovery.v1beta1.EndpointSlice"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.discovery.v1beta1.EndpointSliceList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.events.v1.Event"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.events.v1.EventList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.events.v1beta1.Event"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.events.v1beta1.EventList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.DaemonSet"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.DaemonSetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.Deployment"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.DeploymentList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.Ingress"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.IngressList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.NetworkPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.NetworkPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.PodSecurityPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.PodSecurityPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.ReplicaSet"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.ReplicaSetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.extensions.Scale"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1.FlowSchema"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1.FlowSchemaList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1.PriorityLevelConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1.PriorityLevelConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta1.FlowSchema"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta1.FlowSchemaList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta1.PriorityLevelConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta1.PriorityLevelConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta2.FlowSchema"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta2.FlowSchemaList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta2.PriorityLevelConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta2.PriorityLevelConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta3.FlowSchema"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta3.FlowSchemaList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta3.PriorityLevelConfiguration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.flowcontrol.v1beta3.PriorityLevelConfigurationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.BackendTLSPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.BackendTLSPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.GRPCRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.GRPCRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.Gateway"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.GatewayClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.GatewayClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.GatewayList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.HTTPRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.HTTPRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.ListenerSet"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.ListenerSetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.ReferenceGrant"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.ReferenceGrantList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.TCPRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.TCPRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.TLSRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.TLSRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.UDPRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1.UDPRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.GRPCRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.GRPCRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.ReferenceGrant"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.ReferenceGrantList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.TCPRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.TCPRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.TLSRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.TLSRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.UDPRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha2.UDPRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha3.BackendTLSPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha3.BackendTLSPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha3.TLSRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1alpha3.TLSRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.Gateway"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.GatewayClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.GatewayClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.GatewayList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.HTTPRoute"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.HTTPRouteList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.ReferenceGrant"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.gatewayapi.v1beta1.ReferenceGrantList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.metrics.v1beta1.NodeMetrics"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.metrics.v1beta1.NodeMetricsList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.metrics.v1beta1.PodMetrics"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.metrics.v1beta1.PodMetricsList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.IPAddress"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.IPAddressList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.Ingress"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.IngressClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.IngressClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.IngressList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.ServiceCIDR"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1.ServiceCIDRList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1beta1.Ingress"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1beta1.IngressClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1beta1.IngressClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.networking.v1beta1.IngressList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.node.v1.RuntimeClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.node.v1.RuntimeClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.node.v1alpha1.RuntimeClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.node.v1alpha1.RuntimeClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.node.v1beta1.RuntimeClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.node.v1beta1.RuntimeClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1.Eviction"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1.PodDisruptionBudget"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1.PodDisruptionBudgetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1beta1.Eviction"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1beta1.PodDisruptionBudget"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1beta1.PodDisruptionBudgetList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1beta1.PodSecurityPolicy"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.policy.v1beta1.PodSecurityPolicyList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.ClusterRole"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.ClusterRoleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.Role"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.RoleBinding"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.RoleBindingList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.rbac.RoleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.DeviceClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.DeviceClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.DeviceTaintRule"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.DeviceTaintRuleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.ResourceClaim"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.ResourceClaimList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.ResourceClaimTemplate"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.ResourceClaimTemplateList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.ResourceSlice"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1.ResourceSliceList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.PodSchedulingContext"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.PodSchedulingContextList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClaim"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClaimList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClaimParameters"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClaimParametersList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClaimTemplate"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClaimTemplateList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClassParameters"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceClassParametersList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceSlice"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha2.ResourceSliceList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha3.DeviceTaintRule"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha3.DeviceTaintRuleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha3.ResourcePoolStatusRequest"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1alpha3.ResourcePoolStatusRequestList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.DeviceClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.DeviceClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.ResourceClaim"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.ResourceClaimList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.ResourceClaimTemplate"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.ResourceClaimTemplateList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.ResourceSlice"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta1.ResourceSliceList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.DeviceClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.DeviceClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.DeviceTaintRule"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.DeviceTaintRuleList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.ResourceClaim"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.ResourceClaimList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.ResourceClaimTemplate"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.ResourceClaimTemplateList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.ResourceSlice"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.resource.v1beta2.ResourceSliceList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1.PriorityClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1.PriorityClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha1.PriorityClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha1.PriorityClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha3.CompositePodGroup"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha3.CompositePodGroupList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha3.PodGroup"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha3.PodGroupList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha3.Workload"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1alpha3.WorkloadList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1beta1.PodGroup"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1beta1.PodGroupList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1beta1.PriorityClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1beta1.PriorityClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1beta1.Workload"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.scheduling.v1beta1.WorkloadList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.CSIDriver"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.CSIDriverList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.CSINode"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.CSINodeList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.CSIStorageCapacity"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.CSIStorageCapacityList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.StorageClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.StorageClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.VolumeAttachment"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.VolumeAttachmentList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.VolumeAttributesClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.VolumeAttributesClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1alpha1.CSIStorageCapacity"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1alpha1.CSIStorageCapacityList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1alpha1.VolumeAttachment"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1alpha1.VolumeAttachmentList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.CSIDriver"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.CSIDriverList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.CSINode"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.CSINodeList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.CSIStorageCapacity"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.CSIStorageCapacityList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.StorageClass"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.StorageClassList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.VolumeAttachment"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storage.v1beta1.VolumeAttachmentList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storagemigration.v1.StorageVersionMigration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storagemigration.v1.StorageVersionMigrationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storagemigration.v1beta1.StorageVersionMigration"
+    },
+    {
+      "type": "io.fabric8.kubernetes.api.model.storagemigration.v1beta1.StorageVersionMigrationList"
+    },
+    {
+      "type": "io.fabric8.kubernetes.client.CustomResource",
+      "methods": [
+        {
+          "name": "getApiVersion",
+          "parameterTypes": []
+        },
+        {
+          "name": "getKind",
+          "parameterTypes": []
+        },
+        {
+          "name": "getMetadata",
+          "parameterTypes": []
+        },
+        {
+          "name": "getSpec",
+          "parameterTypes": []
+        },
+        {
+          "name": "getStatus",
+          "parameterTypes": []
+        },
+        {
+          "name": "setApiVersion",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "setKind",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "setMetadata",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.api.model.ObjectMeta"
+          ]
+        },
+        {
+          "name": "setSpec",
+          "parameterTypes": [
+            "java.lang.Object"
+          ]
+        },
+        {
+          "name": "setStatus",
+          "parameterTypes": [
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.client.dsl.internal.BaseOperation",
+      "methods": [
+        {
+          "name": "submitList",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.api.model.ListOptions"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.client.dsl.internal.OperationSupport",
+      "methods": [
+        {
+          "name": "handleResponse",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.client.http.HttpRequest$Builder",
+            "java.lang.Class"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.client.impl.KubernetesClientImpl",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "io.fabric8.kubernetes.client.http.HttpClient",
+            "io.fabric8.kubernetes.client.Config",
+            "io.fabric8.kubernetes.client.KubernetesClientBuilder$ExecutorSupplier",
+            "io.fabric8.kubernetes.client.utils.KubernetesSerialization"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.fabric8.kubernetes.client.jdkhttp.JdkHttpClientFactory"
+    },
+    {
+      "type": "io.fabric8.kubernetes.client.utils.KubernetesSerialization",
+      "methods": [
+        {
+          "name": "unmarshal",
+          "parameterTypes": [
+            "java.io.InputStream",
+            "java.lang.Class"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "io.javaoperatorsdk.operator.processing.event.rate.LinearRateLimiter",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.javaoperatorsdk.operator.processing.retry.GenericRetry",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.beans.Introspector"
+    },
+    {
+      "type": "java.io.Serializable"
+    },
+    {
+      "type": "java.lang.Boolean",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getBoolean",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.lang.Class",
+      "methods": [
+        {
+          "name": "isRecord",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.lang.Iterable"
+    },
+    {
+      "type": "java.lang.Object[]"
+    },
+    {
+      "type": "java.security.AlgorithmParametersSpi"
+    },
+    {
+      "type": "java.security.KeyStoreSpi"
+    },
+    {
+      "type": "java.security.interfaces.RSAPrivateKey"
+    },
+    {
+      "type": "java.security.interfaces.RSAPublicKey"
+    },
+    {
+      "type": "java.sql.Date"
+    },
+    {
+      "type": "java.sql.Timestamp"
+    },
+    {
+      "type": "java.util.AbstractCollection"
+    },
+    {
+      "type": "java.util.AbstractMap"
+    },
+    {
+      "type": "java.util.Collection"
+    },
+    {
+      "type": "java.util.ImmutableCollections$AbstractImmutableCollection"
+    },
+    {
+      "type": "java.util.ImmutableCollections$AbstractImmutableList"
+    },
+    {
+      "type": "java.util.ImmutableCollections$AbstractImmutableMap"
+    },
+    {
+      "type": "java.util.ImmutableCollections$ListN"
+    },
+    {
+      "type": "java.util.ImmutableCollections$Map1"
+    },
+    {
+      "type": "java.util.List"
+    },
+    {
+      "type": "java.util.Map"
+    },
+    {
+      "type": "java.util.RandomAccess"
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.BindingInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.Map",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ChannelInfo"
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ConnectionInfo"
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ConsumerInfo"
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.CurrentUser",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.util.List",
+            "java.lang.Boolean"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ExchangeInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "boolean",
+            "boolean",
+            "boolean",
+            "java.util.Map"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.FeatureFlagInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.ParameterInfo"
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.PermissionInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.PolicyInfo"
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.QueueInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "boolean",
+            "boolean",
+            "boolean",
+            "java.util.Map",
+            "java.lang.Long",
+            "java.lang.Long",
+            "java.lang.Long",
+            "java.lang.Integer",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.acemq.rabbitmq.admin.UserInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.slf4j.simple.SimpleServiceProvider"
+    },
+    {
+      "type": "sun.security.pkcs12.PKCS12KeyStore",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.pkcs12.PKCS12KeyStore$DualFormatPKCS12",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.DSA$SHA224withDSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.DSA$SHA256withDSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.JavaKeyStore$DualFormatJKS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.JavaKeyStore$JKS",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.NativePRNG",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.security.SecureRandomParameters"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA2$SHA224",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA2$SHA256",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA5$SHA384",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.SHA5$SHA512",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.X509Factory",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.provider.certpath.PKIXCertPathValidator",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.PSSParameters",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSAKeyFactory$Legacy",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSAPSSSignature",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSASignature$SHA224withRSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSASignature$SHA256withRSA",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.KeyManagerFactoryImpl$SunX509",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.SSLContextImpl$DefaultSSLContext",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.SSLContextImpl$TLS13Context",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.ssl.TrustManagerFactoryImpl$PKIXFactory",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.AuthorityInfoAccessExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.AuthorityKeyIdentifierExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.BasicConstraintsExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.CRLDistributionPointsExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.CertificatePoliciesExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.ExtendedKeyUsageExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.KeyUsageExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.NetscapeCertTypeExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.PrivateKeyUsageExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.SubjectAlternativeNameExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.security.x509.SubjectKeyIdentifierExtension",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.Boolean",
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.text.resources.cldr.FormatData"
+    },
+    {
+      "type": "sun.text.resources.cldr.FormatData_en"
+    },
+    {
+      "type": "sun.text.resources.cldr.FormatData_en_US"
+    },
+    {
+      "type": "sun.util.resources.cldr.CalendarData"
+    },
+    {
+      "type": "sun.util.resources.cldr.TimeZoneNames"
+    },
+    {
+      "type": "sun.util.resources.cldr.TimeZoneNames_en"
+    },
+    {
+      "type": "sun.util.resources.cldr.TimeZoneNames_en_US"
+    }
+  ],
+  "resources": [
+    {
+      "glob": "META-INF/services/io.fabric8.kubernetes.api.model.KubernetesResource"
+    },
+    {
+      "glob": "META-INF/services/io.fabric8.kubernetes.client.extension.ExtensionAdapter"
+    },
+    {
+      "glob": "META-INF/services/io.fabric8.kubernetes.client.http.HttpClient$Factory"
+    },
+    {
+      "glob": "META-INF/services/java.net.spi.InetAddressResolverProvider"
+    },
+    {
+      "glob": "META-INF/services/java.net.spi.URLStreamHandlerProvider"
+    },
+    {
+      "glob": "META-INF/services/java.nio.channels.spi.SelectorProvider"
+    },
+    {
+      "glob": "META-INF/services/java.time.zone.ZoneRulesProvider"
+    },
+    {
+      "glob": "META-INF/services/org.slf4j.spi.SLF4JServiceProvider"
+    },
+    {
+      "glob": "simplelogger.properties"
+    },
+    {
+      "glob": "version.properties"
+    },
+    {
+      "module": "java.base",
+      "glob": "jdk/internal/icu/impl/data/icudt76b/nfkc.nrm"
+    }
+  ]
+}

@@ -45,6 +45,26 @@
       <groupId>io.javaoperatorsdk</groupId>
       <artifactId>operator-framework</artifactId>
       <version>${josdk.version}</version>
+      <!-- One HTTP client to the API server, the JDK's, which JOSDK already
+           declares. fabric8 also brings its Vert.x one, and picks between them
+           by priority at run time; with both present the JVM and native images
+           could end up talking through different stacks. Vert.x is Netty
+           underneath, which is the larger part of what a native image would
+           need registering, for a client nothing here asked for. -->
+      <exclusions>
+        <exclusion>
+          <groupId>io.fabric8</groupId>
+          <artifactId>kubernetes-httpclient-vertx</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <!-- Compiled against by NativeImageFeature, which runs inside native-image
+         and nowhere else; the JVM image never loads it. -->
+    <dependency>
+      <groupId>org.graalvm.sdk</groupId>
+      <artifactId>nativeimage</artifactId>
+      <version>25.0.1</version>
+      <scope>provided</scope>
     </dependency>
     <!-- Read by the CRD generator at build time and by nothing at run time. -->
     <dependency>

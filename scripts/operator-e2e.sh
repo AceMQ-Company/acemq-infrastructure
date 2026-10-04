@@ -5,6 +5,8 @@
 #   ./scripts/operator-e2e.sh --keep      leave the cluster up afterwards, to look
 #   ./scripts/operator-e2e.sh --no-build  use the images already built
 #   ./scripts/operator-e2e.sh --reuse     run again on a cluster an earlier --keep left
+#   ./scripts/operator-e2e.sh --native    the same runs against the native image
+#                                         (Dockerfile.native) instead of the JVM one
 #
 # Three runs against two real RabbitmqClusters, blue and green, made by the
 # RabbitMQ Cluster Operator (pinned below, with the cert-manager it needs)
@@ -38,6 +40,7 @@ OPERATOR_NS=acemq-infra-system
 CLUSTER_OPERATOR=v2.23.0
 CERT_MANAGER=v1.21.2   # the Cluster Operator's manifest has needed it since v2.22
 OPERATOR_IMAGE=acemq-infra-operator:dev
+DOCKERFILE=Dockerfile
 CLIENT_IMAGE=acemq-infra-e2e-client:dev
 QUEUE=orders.new
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -52,6 +55,7 @@ for argument in "$@"; do
     --keep) KEEP=1 ;;
     --no-build) BUILD=0 ;;
     --reuse) REUSE=1; KEEP=1 ;;
+    --native) OPERATOR_IMAGE=acemq-infra-operator:dev-native; DOCKERFILE=Dockerfile.native ;;
     *) echo "unknown option: $argument" >&2; exit 2 ;;
   esac
 done
@@ -84,12 +88,18 @@ cleanup() {
 
 if [[ $BUILD == 1 ]]; then
   say "build"
-  (cd "$ROOT" && mvn -B -q --no-transfer-progress -pl acemq-infra-operator -am package \
+  # clean: target/lib is copied into the image whole, and a jar a dependency
+  # change dropped would otherwise still be in it.
+  (cd "$ROOT" && mvn -B -q --no-transfer-progress -pl acemq-infra-operator -am clean package \
       -DskipTests -DskipITs)
-  docker build -q -t "$OPERATOR_IMAGE" "$ROOT/acemq-infra-operator" >/dev/null
+  docker build -q -f "$ROOT/acemq-infra-operator/$DOCKERFILE" -t "$OPERATOR_IMAGE" \
+    "$ROOT/acemq-infra-operator" >/dev/null
   docker build -q -t "$CLIENT_IMAGE" "$HERE" >/dev/null
 fi
 
+# With --no-build, E2E_OPERATOR_IMAGE runs an image built some other way — for
+# instance a JVM one under GraalVM's tracing agent, to collect metadata.
+[[ $BUILD == 0 && -n "${E2E_OPERATOR_IMAGE:-}" ]] && OPERATOR_IMAGE="$E2E_OPERATOR_IMAGE"
 trap cleanup EXIT
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   [[ $REUSE == 1 ]] || { KEEP=1; fail "a kind cluster named $CLUSTER already exists; this script only uses one it created (--reuse to run on it again)"; }
@@ -247,7 +257,13 @@ reset_queues
 client publish blue "$QUEUE" "$PUBLISHED"
 client_pod consumer Never python -u /client.py consume blue "$QUEUE"
 k -n "$NS" wait --for=condition=Ready pod/consumer --timeout=2m >/dev/null
-sleep 5
+# Until the management API reports the consumer, and one statistics interval
+# more for its channel: the close step finds consuming connections through the
+# channel statistics, and an operator quick enough off the mark (the native
+# image is) otherwise closes nothing and the unacked wait aborts the run.
+for _ in $(seq 1 60); do [[ "$(consumers blue)" == 1 ]] && break; sleep 1; done
+expect "the consumer is attached" "$(consumers blue)" 1
+sleep 6
 cutover e2e-cutover
 wait_phase e2e-cutover Planned 180
 PLAN=$(field e2e-cutover planFingerprint)
@@ -403,7 +419,7 @@ expect "no journal for either" "$(k -n "$NS" get configmap e2e-unlabelled-journa
 k -n "$NS" delete cutover e2e-unlabelled e2e-off-allowlist --timeout=120s >/dev/null
 RUN5="unlabelled-secret=Refused off-allowlist-url=Refused"
 
-say "passed"
+say "passed ($OPERATOR_IMAGE)"
 echo "  1. cutover : $RUN1"
 echo "  2. rollback: $RUN2"
 echo "  3. restart : $RUN3"

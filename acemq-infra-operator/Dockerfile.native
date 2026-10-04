@@ -1,0 +1,29 @@
+# The operator as a GraalVM native image. Build the module first, as for the
+# JVM image:
+#   mvn -B -pl acemq-infra-operator -am clean package -DskipTests
+#   docker build -f acemq-infra-operator/Dockerfile.native -t acemq-infra-operator:dev-native acemq-infra-operator
+#
+# native-image builds for the architecture it runs on and does not
+# cross-compile, so the release builds this once per architecture, each on a
+# runner of that architecture, and joins them in one manifest list.
+FROM ghcr.io/graalvm/native-image-community:25 AS build
+WORKDIR /build
+COPY target/lib/ lib/
+COPY target/acemq-infra-operator-*.jar operator.jar
+# -march=compatibility for the reason acemq-infra-native gives: the image runs
+# on nodes this build has never seen. The reflection the image needs comes from
+# the jars themselves: META-INF/native-image in acemq-infra-rabbitmq (the admin
+# client's model) and in this module (NativeImageFeature, the Kubernetes models).
+RUN native-image -march=compatibility -H:+ReportExceptionStackTraces \
+      -jar operator.jar -o acemq-infra-operator
+
+# Debian rather than distroless: an endpoint hook is a command the deployment
+# file names, run inside this container, and it needs at least a /bin to run
+# from, as it has in the JVM image.
+FROM debian:bookworm-slim
+COPY --from=build /build/acemq-infra-operator /app/acemq-infra-operator
+# The deployment file and the journal are written under /tmp before they are
+# handed to the CLI; the journal's real home is the ConfigMap.
+WORKDIR /tmp
+USER 65532:65532
+ENTRYPOINT ["/app/acemq-infra-operator"]

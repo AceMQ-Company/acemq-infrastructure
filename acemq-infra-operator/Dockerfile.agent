@@ -1,0 +1,9 @@
+# The JVM operator on a GraalVM JDK with the tracing agent on, for recording
+# the reachability metadata the native image needs. Not published; see the
+# comment in src/main/resources/META-INF/native-image/.../reachability-metadata.json.
+FROM ghcr.io/graalvm/jdk-community:25
+COPY target/lib/ /app/lib/
+COPY target/acemq-infra-operator-*.jar /app/operator.jar
+WORKDIR /tmp
+USER 65532:65532
+ENTRYPOINT ["java", "-agentlib:native-image-agent=config-output-dir=/tmp/agent,config-write-period-secs=5", "-jar", "/app/operator.jar"]

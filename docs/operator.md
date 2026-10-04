@@ -32,12 +32,35 @@ $ gh attestation verify oci://ghcr.io/acemq-company/acemq-infra-operator:0.6.0 \
     --repo AceMQ-Company/acemq-infrastructure
 ```
 
+### The native image
+
+The same operator compiled by GraalVM is published beside it as
+`ghcr.io/acemq-company/acemq-infra-operator:<version>-native` (and
+`latest-native`), for linux/amd64 and linux/arm64, each built on a runner of
+its own architecture. It is the same code with the same behaviour — the kind
+end-to-end run passes against both images on every push — and it starts in a
+fraction of the time and memory. Use it by changing `image:` in
+`operator.yaml`; the memory request there is sized for the JVM and can come
+down.
+
+Reflection, which a native image takes away, is registered from the jars: the
+admin client's model by the CLI's own reachability file, and the Kubernetes
+models — fabric8's core, common and coordination, every class, enumerated at
+build time — and the `Cutover` resource by `NativeImageFeature`, and the rest
+(the JDK's TLS, fabric8 building its client, JOSDK's default retry and rate
+limiter) by a reachability file recorded with GraalVM's tracing agent over the
+whole kind run; its comment says how to record it again. The operator
+talks to the API server through the JDK's HTTP client in both images (fabric8's
+Vert.x client is excluded), so there is one network stack to register.
+
 To run a build of your own instead, build it, put it where your cluster can
 pull it, and change `image:` in `deploy/operator.yaml`:
 
 ```console
 $ mvn -B -pl acemq-infra-operator -am package -DskipTests
 $ docker build -t acemq-infra-operator:dev acemq-infra-operator
+$ # or, native:
+$ docker build -f acemq-infra-operator/Dockerfile.native -t acemq-infra-operator:dev acemq-infra-operator
 $ kind load docker-image acemq-infra-operator:dev   # or push to your registry
 ```
 
@@ -402,9 +425,6 @@ give the operator's own permissions.
 
 ## What it does not do
 
-- **Ship a native image.** The published image runs the operator on a JVM, and
-  that is what is tested; a native one is possible on the same toolchain and
-  has not been built.
 - **Keep backups.** A `backup:` step writes to the pod's disk, which goes with
   the pod. Disable it, or point a hook at somewhere durable.
 - **Resume.** Above.
@@ -433,4 +453,5 @@ the operator pod killed without grace while the drain runs, which has to come
 back `Interrupted` with the journal untouched and then roll back; and a
 completed Cutover deleted, its journal kept and then rolled back by a new
 Cutover through `journalFrom`; and an unlabelled Secret and a URL off the
-allowlist, both refused. CI runs it on every push.
+allowlist, both refused. CI runs it on every push, once against the JVM image
+and once against the native one (`--native`).

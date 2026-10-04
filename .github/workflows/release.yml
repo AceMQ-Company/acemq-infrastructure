@@ -8,7 +8,8 @@
 # phase 4, three native binaries attached to the GitHub release: linux-amd64,
 # linux-arm64 and darwin-arm64, with a SHA256SUMS file and build provenance for
 # each one. Since phase 5, the operator image on GHCR for linux/amd64 and
-# linux/arm64, and deploy/crd.yaml and deploy/operator.yaml on the release.
+# linux/arm64, and deploy/crd.yaml and deploy/operator.yaml on the release;
+# beside it, the same operator as a native image, tagged <version>-native.
 # The library and the CLI go out together, in one release, which is
 # what docs/shape.md committed to: a CLI with no library underneath it cannot be
 # embedded and a library with no CLI over it cannot be demonstrated.
@@ -556,8 +557,145 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+  # ---------------------------------------------------------------- the native image
+  #
+  # The same operator compiled by GraalVM, as <version>-native. native-image
+  # builds for the host and does not cross-compile, and a native binary under
+  # QEMU is not one anybody has run, so each architecture is built on a runner
+  # of that architecture -- the binaries job's rule -- and pushed by digest
+  # alone; the manifest job below joins the two under the tag. The build runs
+  # inside Dockerfile.native's builder stage, so the runner needs only Docker.
+  operator-image-native:
+    needs: [version, binaries, publish]
+    name: the native operator image on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux/amd64
+            slug: linux-amd64
+          - os: ubuntu-24.04-arm
+            platform: linux/arm64
+            slug: linux-arm64
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/acemq-company/acemq-infra-operator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build the operator jar at the release version
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          mvn -B --no-transfer-progress versions:set \
+            -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+          mvn -B --no-transfer-progress -pl acemq-infra-operator -am package \
+            -DskipTests -DskipITs -Djacoco.skip=true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: acemq-infra-operator
+          file: acemq-infra-operator/Dockerfile.native
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.version.outputs.value }}-native
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=acemq-infra-operator
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-digest-${{ matrix.slug }}
+          path: digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  operator-image-native-manifest:
+    needs: [version, operator-image-native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/acemq-company/acemq-infra-operator
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: native-digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: One tag over both architectures
+        id: manifest
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          count=$(find digests -type f | wc -l)
+          [ "$count" -eq 2 ] || { echo "::error::expected 2 digests, found $count"; exit 1; }
+          tags=(-t "$IMAGE:$VERSION-native")
+          # latest-native only for a plain x.y.z, as with :latest.
+          case "$VERSION" in
+            *-*) ;;
+            *) tags+=(-t "$IMAGE:latest-native") ;;
+          esac
+          sources=()
+          for digest in digests/*; do
+            sources+=("$IMAGE@sha256:$(basename "$digest")")
+          done
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION-native"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION-native" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
   notify:
-    needs: [publish, release-assets, operator-image]
+    needs: [publish, release-assets, operator-image, operator-image-native-manifest]
     # Only when something actually reached the feed. A run that failed before
     # the push published nothing, and announcing that in either direction tells
     # the channel about a version that does not exist.
@@ -568,14 +706,14 @@ jobs:
       # The jars being on the feed while the binaries never reached the release
       # is a half-shipped distribution, and announcing it as finished is how
       # somebody spends a morning looking for a download that is not there.
-      status: ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success') && 'success' || 'failure' }}
+      status: ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success' && needs.operator-image-native-manifest.result == 'success') && 'success' || 'failure' }}
       title: >-
-        ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success')
+        ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success' && needs.operator-image-native-manifest.result == 'success')
             && format('acemq-infrastructure {0} released', github.ref_name)
             || format('acemq-infrastructure {0} is published but the release did not finish', github.ref_name) }}
       message: >-
-        ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success')
-            && 'On the Maven feed and resolving from a clean repository, with native binaries for linux-amd64, linux-arm64 and darwin-arm64 and the operator manifests on the release, and the operator image on GHCR. Every binary ran the cutover suite before any of this was published.'
+        ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success' && needs.operator-image-native-manifest.result == 'success')
+            && 'On the Maven feed and resolving from a clean repository, with native binaries for linux-amd64, linux-arm64 and darwin-arm64 and the operator manifests on the release, and the operator image on GHCR, JVM and native. Every binary ran the cutover suite before any of this was published.'
             || 'The artifacts are on the feed and consumers can resolve them, but a later step did not pass. Most often that is GitHub Pages taking longer than the verify step waits, or an asset not being served yet. Check the run before doing anything to the tag.' }}
       # Roadworks rather than a red dot, and the title says "published but the
       # release did not finish" rather than "failed". By the time this runs the
@@ -587,7 +725,7 @@ jobs:
       # back on the status-derived tick does not work: in GitHub's expression
       # language `a && '' || b` yields b, because an empty string is falsy, so
       # every successful release would be announced with roadworks.
-      icon: ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success') && ':white_check_mark:' || ':construction:' }}
+      icon: ${{ (needs.publish.result == 'success' && needs.release-assets.result == 'success' && needs.operator-image.result == 'success' && needs.operator-image-native-manifest.result == 'success') && ':white_check_mark:' || ':construction:' }}
       url: https://acemq.org/maven/
     secrets:
       # Explicit, not `inherit`. A reusable workflow in another repository does

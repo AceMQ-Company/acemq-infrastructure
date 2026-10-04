@@ -11,6 +11,10 @@ on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
 
 ### Changed
 
+- **The operator talks to the API server through the JDK's HTTP client.**
+  fabric8's Vert.x client, which JOSDK's dependencies also brought in and
+  fabric8 preferred at run time, is excluded, in both images.
+
 - **Behaviour change — the operator reads only Secrets labelled
   `infra.acemq.org/credentials: "true"`.** Existing Secrets that Cutovers
   reference need the label before upgrading, or those Cutovers are `Refused`
@@ -54,6 +58,14 @@ on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
   labelled `infra.acemq.org/retained=true`, and only with `action: rollback`.
   [The operator](docs/operator.md#the-journal-outlives-the-cutover) also shows
   how to roll one back by hand with `acemq-infra rollback --journal`.
+- **The operator as a native image:**
+  `ghcr.io/acemq-company/acemq-infra-operator:<version>-native` (and
+  `latest-native` for a plain release), linux/amd64 and linux/arm64, each built
+  by GraalVM on a runner of its own architecture and joined in one manifest
+  list, with build provenance. `acemq-infra-operator/Dockerfile.native` builds
+  it; `NativeImageFeature` registers the Kubernetes models and the `Cutover`
+  resource for reflection. The kind end-to-end run, in CI and in
+  `scripts/operator-e2e.sh --native`, passes against both images.
 
 ## [0.6.0] - 2026-10-04
 

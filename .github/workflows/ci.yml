@@ -258,11 +258,19 @@ jobs:
   # without grace in the middle of the drain, which has to come back
   # Interrupted with its journal untouched. The mock-server tests in the build
   # job prove the state machine; this proves the pod, the RBAC, the lease and
-  # the ConfigMap journal on a real API server, against real brokers.
+  # the ConfigMap journal on a real API server, against real brokers. Then a
+  # deleted Cutover's journal kept and rolled back from, and the Secret label
+  # and URL allowlist refusals. Twice: the JVM image and the native one, the
+  # whole run each, because the native image is published too and a green JVM
+  # run proves nothing about a reflection registration it is missing.
   operator-e2e:
-    name: operator on kind
+    name: operator on kind${{ matrix.image == 'native' && ' (native)' || '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [jvm, native]
     steps:
       - uses: actions/checkout@v4
 
@@ -276,8 +284,15 @@ jobs:
         with:
           install_only: true
 
-      - name: Cutover, rollback and restart on kind
-        run: ./scripts/operator-e2e.sh
+      - name: Cutover, rollback, restart, retained journal and refusals on kind
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          if [ "$IMAGE" = native ]; then
+            ./scripts/operator-e2e.sh --native
+          else
+            ./scripts/operator-e2e.sh
+          fi
 
   examples:
     name: configuration format
