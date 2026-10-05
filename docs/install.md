@@ -14,7 +14,7 @@ and not a gap.
 ## The binary
 
 ```bash
-VERSION=0.6.0
+VERSION=0.7.0
 PLATFORM=linux-amd64        # or linux-arm64, or darwin-arm64
 BASE=https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION
 
@@ -76,7 +76,7 @@ repository and the commit it was built from, recorded in a public transparency
 log:
 
 ```bash
-gh attestation verify acemq-infra-0.6.0-linux-amd64 \
+gh attestation verify acemq-infra-0.7.0-linux-amd64 \
   --repo AceMQ-Company/acemq-infrastructure
 ```
 
@@ -105,7 +105,7 @@ happened. [The library](library.md) is the page about what it exposes.
 <dependency>
   <groupId>org.acemq</groupId>
   <artifactId>acemq-infra-cli</artifactId>
-  <version>0.6.0</version>
+  <version>0.7.0</version>
 </dependency>
 ```
 
@@ -120,7 +120,7 @@ A plan, an apply or a rollback from a pipeline, with nothing installed. The acti
 the binary for whatever runner it is on, checks it, and runs it.
 
 ```yaml
-- uses: AceMQ-Company/acemq-infrastructure@v0.6.0
+- uses: AceMQ-Company/acemq-infrastructure@v0.7.0
   with:
     command: plan
     file: deployment.yaml
@@ -136,7 +136,7 @@ of this tool trustworthy, and a fold in a log is where that goes to die. Pass
 | `command` | `validate`, `plan`, `apply` or `rollback` |
 | `file` | the deployment file; `rollback` reads the one its journal names when this is empty |
 | `journal` | `apply`: where to record what it did (`--journal`); `rollback`: the journal to undo, required |
-| `version` | which release to run; defaults to the tag the action was used at, so `@v0.6.0` runs `0.6.0` |
+| `version` | which release to run; defaults to the tag the action was used at, so `@v0.7.0` runs `0.7.0` |
 | `dry-run` | `apply` or `rollback`: rehearse every step against both clusters and write nothing |
 | `assume-yes` | `apply` or `rollback`: consent to the run starting, which is `--yes` |
 | `require-variables` | `validate` only: an unset `${VAR}` is an error |
@@ -166,7 +166,7 @@ what every package manager calls the same thing.
 `apply` stops and asks before it writes anything, and a runner is nobody. So:
 
 ```yaml
-- uses: AceMQ-Company/acemq-infrastructure@v0.6.0
+- uses: AceMQ-Company/acemq-infrastructure@v0.7.0
   with:
     command: apply
     file: deployment.yaml

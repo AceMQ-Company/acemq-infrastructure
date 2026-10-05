@@ -4,10 +4,13 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.6.0` is released: [phase 5](docs/roadmap.md), the operator, with its image
-on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
+`0.7.0` is released: the operator as a native image too, journals that outlive
+their Cutover, and an operator that reads only labelled Secrets, sends
+credentials only to allowed hosts and refuses hook endpoints by default.
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-10-04
 
 ### Changed
 
@@ -37,6 +40,16 @@ on GHCR for linux/amd64 and linux/arm64 and its manifests on the release.
   is now `Refused` until the URL is qualified or the allowlist widened (`*`
   turns the check off). `deploy/operator.yaml` sets the default explicitly.
   [Security](docs/operator.md#security) has the details and what remains.
+- **Behaviour change — the operator refuses hook endpoints unless
+  `ACEMQ_INFRA_ALLOW_HOOKS=true`.** An `endpoint.kind: hook` runs a command
+  inside the operator's pod as its service account, which can read any Secret
+  the operator can, so anyone who could create a Cutover could read them all,
+  past the label check. A Cutover with one is now `Refused` before anything is
+  planned, probed or sent (a rollback keeps its phase), with a message naming
+  the setting. Operators running hook cutovers must set
+  `ACEMQ_INFRA_ALLOW_HOOKS=true` on the Deployment and accept that trade;
+  `deploy/operator.yaml` sets `"false"` explicitly. The CLI and the GitHub
+  Action are unchanged.
 
 - **A Cutover's journal outlives it when it is still needed.** Deleting a
   Cutover used to delete its journal ConfigMap through the owner reference,

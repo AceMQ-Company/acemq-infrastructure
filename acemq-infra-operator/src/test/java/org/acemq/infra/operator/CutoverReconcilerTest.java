@@ -68,7 +68,7 @@ class CutoverReconcilerTest {
     @BeforeEach
     void setUp() {
         engine = new Recorder();
-        reconciler = new CutoverReconciler(client, engine, Allowlist.parse(null));
+        reconciler = new CutoverReconciler(client, engine, Allowlist.parse(null), false);
     }
 
     @Test
@@ -402,7 +402,7 @@ class CutoverReconcilerTest {
                     literal("BLUE_PASSWORD", "p"), literal("GREEN_USERNAME", "u"),
                     literal("GREEN_PASSWORD", "p"));
             CutoverReconciler strict = new CutoverReconciler(client, new Engine.Rabbit(),
-                    Allowlist.parse(null));
+                    Allowlist.parse(null), true);
 
             Cutover planned = cutover("planned");
             planned.getSpec().deployment = deployment;
@@ -425,13 +425,54 @@ class CutoverReconcilerTest {
             assertThat(status("undone").message).contains(Allowlist.ENV);
             assertThat(requests.get()).isZero();
 
-            new CutoverReconciler(client, new Engine.Rabbit(), Allowlist.parse("127.0.0.1"))
+            new CutoverReconciler(client, new Engine.Rabbit(), Allowlist.parse("127.0.0.1"),
+                    true)
                     .handle(fetch("planned"));
             assertThat(requests.get()).isPositive();
             assertThat(status("planned").message).doesNotContain(Allowlist.ENV);
         } finally {
             broker.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("a hook endpoint is refused unless the operator allows hooks, before anything is"
+            + " planned, on plan and on rollback")
+    void hooks() throws IOException {
+        String deployment = Files.readString(Path.of("../scripts/operator-e2e/deployment.yaml"));
+        List<Cutover.Variable> variables = List.of(literal("BLUE_USERNAME", "u"),
+                literal("BLUE_PASSWORD", "p"), literal("GREEN_USERNAME", "u"),
+                literal("GREEN_PASSWORD", "p"));
+
+        Cutover planned = cutover("hooked");
+        planned.getSpec().deployment = deployment;
+        planned.getSpec().variables = variables;
+        planned.getSpec().approve = "plan-1";
+        client.resource(planned).create();
+        reconcile("hooked");
+        assertThat(status("hooked").phase).isEqualTo(Cutover.REFUSED);
+        assertThat(status("hooked").message).contains(CutoverReconciler.ALLOW_HOOKS)
+                .contains("service account");
+        assertThat(engine.plans).isZero();
+        assertThat(engine.applies).isEmpty();
+        assertThat(configMap("hooked-journal")).isNull();
+
+        Cutover undone = cutover("undone");
+        undone.getSpec().deployment = deployment;
+        undone.getSpec().variables = variables;
+        undone.getSpec().action = Cutover.ROLLBACK;
+        client.resource(undone).create();
+        setPhase("undone", Cutover.COMPLETED);
+        storeJournal("undone", RUNNING_AT_DRAIN);
+        reconcile("undone");
+        assertThat(status("undone").phase).isEqualTo(Cutover.COMPLETED);
+        assertThat(status("undone").message).contains(CutoverReconciler.ALLOW_HOOKS);
+        assertThat(engine.rollbacks).isEmpty();
+
+        new CutoverReconciler(client, engine, Allowlist.parse(null), true)
+                .handle(fetch("hooked"));
+        assertThat(engine.plans).isEqualTo(1);
+        assertThat(status("hooked").phase).isEqualTo(Cutover.COMPLETED);
     }
 
     // ---------------------------------------------------------------- the fake engine

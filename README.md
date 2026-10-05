@@ -34,7 +34,10 @@ clusters**.
 > ([phase 5](docs/roadmap.md)): the same cutover from a `Cutover` resource — the
 > plan in status, approval by fingerprint, the journal in a ConfigMap, and a
 > controller restart that marks the run `Interrupted` instead of resuming it —
-> with its image on GHCR for linux/amd64 and linux/arm64.
+> with its image on GHCR for linux/amd64 and linux/arm64. `0.7.0` adds a native
+> operator image, keeps journals a deleted Cutover still needs, and has the
+> operator read only labelled Secrets, send credentials only to allowed hosts,
+> and refuse hook endpoints unless told otherwise.
 > See [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
 > the build order and [the library](docs/library.md) for what exists today.
 
@@ -186,7 +189,7 @@ A single executable, no JVM, about 30MB, starting in roughly ten milliseconds.
 provenance checks, and the GitHub Action.
 
 ```console
-$ VERSION=0.6.0 PLATFORM=linux-amd64
+$ VERSION=0.7.0 PLATFORM=linux-amd64
 $ BASE=https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION
 $ curl -fsSLO "$BASE/acemq-infra-$VERSION-$PLATFORM" && curl -fsSLO "$BASE/SHA256SUMS"
 $ grep " acemq-infra-$VERSION-$PLATFORM$" SHA256SUMS | sha256sum -c -
@@ -196,7 +199,7 @@ $ chmod +x "acemq-infra-$VERSION-$PLATFORM" && sudo mv "acemq-infra-$VERSION-$PL
 From a pipeline, with nothing installed:
 
 ```yaml
-- uses: AceMQ-Company/acemq-infrastructure@v0.6.0
+- uses: AceMQ-Company/acemq-infrastructure@v0.7.0
   with:
     command: plan
     file: deployment.yaml

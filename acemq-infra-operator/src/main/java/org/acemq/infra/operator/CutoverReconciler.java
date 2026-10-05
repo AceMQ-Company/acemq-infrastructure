@@ -49,6 +49,11 @@ import io.javaoperatorsdk.operator.api.reconciler.DeleteControl;
 import io.javaoperatorsdk.operator.api.reconciler.Reconciler;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 
+import org.acemq.infra.config.ConfigException;
+import org.acemq.infra.config.DeploymentFiles;
+import org.acemq.infra.config.Endpoint;
+import org.acemq.infra.config.EndpointKind;
+import org.acemq.infra.config.Environment;
 import org.acemq.infra.execute.Journal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -109,12 +114,47 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
     private final KubernetesClient client;
     private final Engine engine;
 
+    /**
+     * The environment variable that lets a Cutover's {@code endpoint.kind: hook} run. A hook is a
+     * command run inside the operator's pod, as its service account, which can read every Secret
+     * the operator can; so by default the operator refuses them.
+     */
+    static final String ALLOW_HOOKS = "ACEMQ_INFRA_ALLOW_HOOKS";
+
     private final Allowlist allowed;
 
-    CutoverReconciler(KubernetesClient client, Engine engine, Allowlist allowed) {
+    private final boolean hooks;
+
+    CutoverReconciler(KubernetesClient client, Engine engine, Allowlist allowed, boolean hooks) {
         this.client = client;
         this.engine = engine;
         this.allowed = allowed;
+        this.hooks = hooks;
+    }
+
+    /**
+     * Why this operator will not run the file, before anything is planned or dialled: a hook
+     * endpoint while hooks are off, or a cluster off the allowlist. A file that cannot be read
+     * names neither, and the planner refuses it.
+     */
+    private Optional<String> refusal(Path file, Map<String, String> env) {
+        if (!hooks) {
+            try {
+                boolean hook = DeploymentFiles.load(file, Environment.of(env)).endpoint()
+                        .flatMap(Endpoint::kind).filter(EndpointKind.HOOK::equals).isPresent();
+                if (hook) {
+                    return Optional.of("endpoint.kind is hook, and this operator does not run"
+                            + " hooks: a hook is a command run inside the operator's pod as its"
+                            + " service account, which can read any Secret the operator can, so"
+                            + " whoever can create a Cutover could read them all. Start the"
+                            + " operator with " + ALLOW_HOOKS + "=true to allow it. Nothing was"
+                            + " planned, run or sent.");
+                }
+            } catch (ConfigException unreadable) {
+                // The planner says why.
+            }
+        }
+        return allowed.refusal(file, env);
     }
 
     @Override
@@ -279,7 +319,7 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
             work = Files.createTempDirectory("cutover-");
             Path file = work.resolve("deployment.yaml");
             Files.writeString(file, spec.deployment, StandardCharsets.UTF_8);
-            Optional<String> off = allowed.refusal(file, env);
+            Optional<String> off = refusal(file, env);
             if (off.isPresent()) {
                 write(cutover, s -> {
                     s.phase = Cutover.REFUSED;
@@ -396,7 +436,7 @@ public class CutoverReconciler implements Reconciler<Cutover>, Cleaner<Cutover> 
             Files.writeString(journalFile, stored.getData().get(JOURNAL_KEY),
                     StandardCharsets.UTF_8);
 
-            Optional<String> off = allowed.refusal(file, env);
+            Optional<String> off = refusal(file, env);
             if (off.isPresent()) {
                 write(cutover, s -> {
                     s.phase = before;

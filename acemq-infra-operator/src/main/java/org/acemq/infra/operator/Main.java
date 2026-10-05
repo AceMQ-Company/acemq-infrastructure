@@ -40,7 +40,8 @@ public final class Main {
      * Environment: {@code POD_NAMESPACE} for the lease (from the downward API), and
      * {@code WATCH_NAMESPACES}, comma-separated, to reconcile Cutovers — and so read Secrets — in
      * those namespaces only. Unset means all of them. {@code ACEMQ_INFRA_ALLOWED_URLS}, the hosts
-     * credentials may be sent to; see {@link Allowlist}.
+     * credentials may be sent to; see {@link Allowlist}. {@code ACEMQ_INFRA_ALLOW_HOOKS=true} to run
+     * hook endpoints, which are refused otherwise.
      *
      * @param arguments none
      */
@@ -54,7 +55,8 @@ public final class Main {
                         new LeaderElectionConfiguration("acemq-infra-operator", leaseNamespace)));
         String watched = System.getenv("WATCH_NAMESPACES");
         CutoverReconciler reconciler = new CutoverReconciler(client, new Engine.Rabbit(),
-                Allowlist.parse(System.getenv(Allowlist.ENV)));
+                Allowlist.parse(System.getenv(Allowlist.ENV)),
+                Boolean.parseBoolean(System.getenv(CutoverReconciler.ALLOW_HOOKS)));
         if (watched == null || watched.isBlank()) {
             operator.register(reconciler);
         } else {

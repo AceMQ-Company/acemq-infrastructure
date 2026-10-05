@@ -109,7 +109,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: operator
-          image: ghcr.io/acemq-company/acemq-infra-operator:0.6.0
+          image: ghcr.io/acemq-company/acemq-infra-operator:0.7.0
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAMESPACE
@@ -124,6 +124,12 @@ spec:
             # in-cluster Services below; "*" turns the check off.
             - name: ACEMQ_INFRA_ALLOWED_URLS
               value: "*.svc,*.svc.cluster.local"
+            # Whether a Cutover may use endpoint.kind: hook. A hook is a
+            # command run in this pod as this service account, which can read
+            # every Secret the operator can, labelled or not; so whoever can
+            # create a Cutover could read them all. Refused unless "true".
+            - name: ACEMQ_INFRA_ALLOW_HOOKS
+              value: "false"
           resources:
             requests:
               cpu: 100m

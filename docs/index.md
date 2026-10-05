@@ -21,7 +21,9 @@ cluster**. That is what this is for.
 > a GitHub Action wrapping it, and the cutover suite runs against the binary
 > rather than against the jar on every push. `0.5.0` drives the rollback through
 > the binary too, from the journal `apply` keeps. `0.6.0` ships
-> [the operator](operator.md), with its image on GHCR. See [installing it](install.md).
+> [the operator](operator.md), with its image on GHCR. `0.7.0` adds a native
+> operator image and closes the operator's credential and hook gaps. See
+> [installing it](install.md).
 
 ## The pages
 

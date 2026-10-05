@@ -27,6 +27,12 @@
 #   5. refusals  a Secret without the infra.acemq.org/credentials label, and a
 #                management URL off the operator's allowlist, are both refused
 #                into status and nothing runs.
+#   6. hooks     the operator as deploy/operator.yaml ships it, with
+#                ACEMQ_INFRA_ALLOW_HOOKS=false: a Cutover with a hook endpoint
+#                is Refused, with no plan and no journal.
+#
+# Runs 1 to 5 use a hook endpoint (/bin/true), so the operator is deployed with
+# ACEMQ_INFRA_ALLOW_HOOKS=true: the harness opting in, as an estate would.
 #
 # Only the cluster this creates is touched: it is `kind-$CLUSTER` and nothing
 # else, and it is deleted on exit unless --keep. Requires docker, kind, kubectl,
@@ -176,9 +182,14 @@ done
 say "the operator"
 k apply -f "$ROOT/deploy/crd.yaml" >/dev/null
 # The manifest names the published image; the run uses the one just built and
-# loaded, so nothing is pulled from GHCR.
-sed -E "s#image: ghcr.io/acemq-company/acemq-infra-operator:.*#image: $OPERATOR_IMAGE#" \
-  "$ROOT/deploy/operator.yaml" | k apply -f - >/dev/null
+# loaded, so nothing is pulled from GHCR. And it refuses hooks, which runs 1 to
+# 5 use; run 6 puts that back.
+sed -E -e "s#image: ghcr.io/acemq-company/acemq-infra-operator:.*#image: $OPERATOR_IMAGE#" \
+  -e '/name: ACEMQ_INFRA_ALLOW_HOOKS/{n;s/"false"/"true"/;}' \
+  "$ROOT/deploy/operator.yaml" > "$WORK/operator.yaml"
+grep -A1 'name: ACEMQ_INFRA_ALLOW_HOOKS' "$WORK/operator.yaml" | grep -q '"true"' \
+  || fail "deploy/operator.yaml no longer sets ACEMQ_INFRA_ALLOW_HOOKS where this expects it"
+k apply -f "$WORK/operator.yaml" >/dev/null
 [[ $REUSE == 1 ]] && k -n "$OPERATOR_NS" rollout restart deploy/acemq-infra-operator >/dev/null
 k -n "$OPERATOR_NS" rollout status deploy/acemq-infra-operator --timeout=5m
 
@@ -419,10 +430,26 @@ expect "no journal for either" "$(k -n "$NS" get configmap e2e-unlabelled-journa
 k -n "$NS" delete cutover e2e-unlabelled e2e-off-allowlist --timeout=120s >/dev/null
 RUN5="unlabelled-secret=Refused off-allowlist-url=Refused"
 
+# ------------------------------------------------------------------ 6. hooks
+
+say "6. hooks: refused by the operator as it ships"
+k -n "$OPERATOR_NS" set env deploy/acemq-infra-operator ACEMQ_INFRA_ALLOW_HOOKS=false >/dev/null
+k -n "$OPERATOR_NS" rollout status deploy/acemq-infra-operator --timeout=5m
+cutover e2e-hook
+wait_phase e2e-hook Refused 180
+MESSAGE=$(field e2e-hook message)
+echo "  message: $MESSAGE"
+expect "the refusal names the setting" "$([[ "$MESSAGE" == *ACEMQ_INFRA_ALLOW_HOOKS* ]] && echo yes)" yes
+expect "no plan was made" "$(field e2e-hook planFingerprint)" ""
+expect "no journal" "$(k -n "$NS" get configmap e2e-hook-journal 2>/dev/null | wc -l | tr -d ' ')" 0
+k -n "$NS" delete cutover e2e-hook --timeout=120s >/dev/null
+RUN6="hook-endpoint=Refused journal=none"
+
 say "passed ($OPERATOR_IMAGE)"
 echo "  1. cutover : $RUN1"
 echo "  2. rollback: $RUN2"
 echo "  3. restart : $RUN3"
 echo "  4. retained: $RUN4"
 echo "  5. refusals: $RUN5"
+echo "  6. hooks   : $RUN6"
 k -n "$NS" get cutovers

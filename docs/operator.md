@@ -21,14 +21,14 @@ linux/amd64 and linux/arm64, from `0.6.0` on. Both manifests are attached to
 the release, and the `operator.yaml` there names that release's image:
 
 ```console
-$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.6.0/crd.yaml
-$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.6.0/operator.yaml
+$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.7.0/crd.yaml
+$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.7.0/operator.yaml
 ```
 
 The image carries build provenance; check it before you run it:
 
 ```console
-$ gh attestation verify oci://ghcr.io/acemq-company/acemq-infra-operator:0.6.0 \
+$ gh attestation verify oci://ghcr.io/acemq-company/acemq-infra-operator:0.7.0 \
     --repo AceMQ-Company/acemq-infrastructure
 ```
 
@@ -170,7 +170,8 @@ which change while you read them and would make every approval stale.
 Approval is `apply --yes` and means what `--yes` means: consent to the run
 **starting**. A prompt in the middle of a run — an `external` endpoint switch, an
 `onTimeout: prompt` — has nobody to answer it, and stops the run, exactly as in a
-pipeline. Use `endpoint.kind: hook` for a cutover the operator runs end to end.
+pipeline. Use `endpoint.kind: hook` for a cutover the operator runs end to end,
+on an operator started with `ACEMQ_INFRA_ALLOW_HOOKS=true` ([Security](#security)).
 
 ## The state machine
 
@@ -379,8 +380,8 @@ resource model becoming part of this tool's contract, from applying.
 The operator can `get` Secrets in every namespace it watches, and a Cutover
 names the URLs it presents them to. Left at that, whoever can create a Cutover
 in a namespace could have the operator send that namespace's Secrets to a server
-of their choosing. Two checks stand in the way, and both are the operator's
-own, because RBAC can express neither:
+of their choosing, or run a command in the operator's pod. Three checks stand
+in the way, and all are the operator's own, because RBAC can express none:
 
 1. **Only labelled Secrets are read.** A Secret a Cutover names is first asked
    for as metadata only (`PartialObjectMetadata`; its data never reaches the
@@ -417,11 +418,22 @@ Secrets of that namespace, since a Cutover can still present them to any
 allowed host. Set `WATCH_NAMESPACES` (comma-separated) on the Deployment to
 reconcile only the namespaces that need it.
 
-A deployment file's endpoint hook (`endpoint.kind: hook`) runs as a process
-inside the operator's pod, with its service account. Whoever can
-create a Cutover can run a command there, and that is not narrowed by either
-check above. Until it is, give `create` on `cutovers` only to those you would
-give the operator's own permissions.
+3. **Hooks are off unless the operator says otherwise.** A deployment file's
+   endpoint hook (`endpoint.kind: hook`) runs as a process inside the
+   operator's pod, with its service account, which can read every Secret the
+   operator can, labelled or not. So a Cutover with a hook endpoint is
+   `Refused` (a rollback keeps its phase) before anything is planned, probed or
+   sent, with a message naming the setting, unless the operator runs with:
+
+   | `ACEMQ_INFRA_ALLOW_HOOKS` | Hook endpoints |
+   |---|---|
+   | unset, `false` (the default; `deploy/operator.yaml` sets it) | refused |
+   | `true` | run, in the operator's pod, as its service account |
+
+   With it `true`, whoever can create a Cutover can run a command as the
+   operator: give `create` on `cutovers` only to those you would give the
+   operator's own permissions. The CLI and the GitHub Action are not affected;
+   they run hooks as whoever runs them.
 
 ## What it does not do
 
@@ -443,7 +455,8 @@ from a kept journal once and taking it, the refusals of `journalFrom`,
 Secret resolution that names a missing Secret and never shows a value, an
 unlabelled Secret refused with only its metadata ever requested, and a URL off
 the allowlist refused on plan and on rollback while a local HTTP server
-standing in for the broker counts zero requests.
+standing in for the broker counts zero requests, and a hook endpoint refused
+on plan and on rollback, with nothing planned, until hooks are allowed.
 
 `scripts/operator-e2e.sh` runs it for real, on a kind cluster it creates and
 deletes: the RabbitMQ Cluster Operator, two `RabbitmqCluster`s, the operator
@@ -452,6 +465,9 @@ counted message by message; a cutover rolled back through `spec.action`; and
 the operator pod killed without grace while the drain runs, which has to come
 back `Interrupted` with the journal untouched and then roll back; and a
 completed Cutover deleted, its journal kept and then rolled back by a new
-Cutover through `journalFrom`; and an unlabelled Secret and a URL off the
-allowlist, both refused. CI runs it on every push, once against the JVM image
+Cutover through `journalFrom`; an unlabelled Secret and a URL off the
+allowlist, both refused; and, with `ACEMQ_INFRA_ALLOW_HOOKS` back at the
+shipped `false`, a hook endpoint refused with no plan and no journal. The
+first five use a hook endpoint, so the run deploys the operator with it
+`true`. CI runs it on every push, once against the JVM image
 and once against the native one (`--native`).
