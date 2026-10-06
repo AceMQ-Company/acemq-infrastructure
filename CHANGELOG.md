@@ -10,6 +10,26 @@ credentials only to allowed hosts and refuses hook endpoints by default.
 
 ## [Unreleased]
 
+### Added
+
+- **A `closeConnections` step says what it can duplicate.** Just before it
+  closes, it reads how many deliveries are unsettled on the cluster and prints
+  the number with the step: those are requeued and moved with the rest, and any
+  a consumer had already handled — its ack cut off by the close — is processed
+  twice. The cutover's counterpart of the cost a rollback prints.
+
+### Fixed
+
+- **The kind end-to-end run failed when a cutover duplicated a message**, as
+  `atLeastOnce` allows: it asserted acked-on-blue plus on-green equalled what
+  was published, and a scheduled run on the native image got 3001 of 3000.
+  The consumer finishes the message in hand after the broker has sent
+  `connection.close`; the broker discards its ack, as the protocol requires,
+  requeues the message and the drain moves it to green. Counting acks hid this
+  whenever the client noticed the close before its ack returned, which was most
+  runs. It now accounts by message id: nothing lost, nothing unknown, and the
+  duplicates no more than the close step reported — one, on every local run. [Message state](docs/message-state.md) names the case.
+
 ## [0.7.0] - 2026-10-04
 
 ### Changed

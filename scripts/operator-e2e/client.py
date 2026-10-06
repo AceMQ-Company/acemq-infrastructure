@@ -1,4 +1,4 @@
-"""The e2e's hands on the two brokers: publish, consume, count, purge.
+"""The e2e's hands on the two brokers: publish, consume, count, list, purge.
 
 Run inside the cluster (the client image), with BLUE_USERNAME, BLUE_PASSWORD,
 GREEN_USERNAME and GREEN_PASSWORD from the RabbitMQ Cluster Operator's
@@ -52,23 +52,45 @@ def publish(cluster, queue, count):
 
 
 def consume(cluster, queue):
-    """Acks slowly and keeps count, until the cutover closes the connection."""
-    acked = 0
+    """Handles slowly and keeps the ids, until the cutover closes the connection.
+
+    An id is recorded once it is handled, before its ack is sent. Once the
+    broker has sent connection.close it discards every frame but close-ok, so
+    the ack for the message in hand when the cutover closes us is thrown away
+    and that message, already handled, is requeued and moved to green. That is
+    the atLeastOnce duplicate the e2e counts, so the ids are what it compares;
+    counting acks pika let through hid it whenever pika saw the close first.
+    """
+    handled = []
     try:
         connection = pika.BlockingConnection(params(cluster))
         channel = connection.channel()
         channel.basic_qos(prefetch_count=5)
-        for method, _, _ in channel.consume(queue, inactivity_timeout=600):
+        for method, _, body in channel.consume(queue, inactivity_timeout=600):
             if method is None:
                 break
             time.sleep(0.05)
+            handled.append(int(body.split()[-1]))
             channel.basic_ack(method.delivery_tag)
-            acked += 1
-            if acked % 25 == 0:
-                print(f"acked={acked}", flush=True)
+            if len(handled) % 25 == 0:
+                print(f"handled={len(handled)}", flush=True)
     except Exception as closed:  # the cutover closing us is the expected way out
         print(f"closed: {closed!r}", flush=True)
-    print(f"final acked={acked}", flush=True)
+    print(f"final handled={len(handled)}", flush=True)
+    print(f"final ids={json.dumps(handled)}", flush=True)
+
+
+def ids(cluster, queue):
+    """The ids on a queue, as JSON, left where they are: got unacked, requeued on close."""
+    found = []
+    with pika.BlockingConnection(params(cluster)) as connection:
+        channel = connection.channel()
+        while True:
+            method, _, body = channel.basic_get(queue)
+            if method is None:
+                break
+            found.append(int(body.split()[-1]))
+    print(json.dumps(found))
 
 
 def depth(cluster, queue):

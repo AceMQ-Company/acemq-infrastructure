@@ -758,6 +758,19 @@ public final class Executor {
             }
         }
 
+        // What the close costs, read just before it, as the rollback reads its own cost. A delivery a
+        // consumer holds unsettled is requeued here by the close and moved with the rest -- including
+        // the one it is finishing, because once the broker has sent connection.close it discards
+        // every frame but close-ok, the ack among them. Nothing can tell those apart afterwards:
+        // this is the most the close can duplicate, a number rather than a warning, and it is what
+        // atLeastOnce costs at this step.
+        if (!matching.isEmpty()) {
+            lines.add(brokers.get(on).measure(scopedQueues).unacked().describe()
+                    + " delivered on " + on + " and not settled as the close began (management"
+                    + " statistics, up to 5s old): requeued and moved with the rest — any a"
+                    + " consumer had already handled is processed twice");
+        }
+
         if (run.mode() == Run.Mode.REHEARSE) {
             matching.forEach(attachment -> lines.add("would close " + attachment.name()
                     + " (" + attachment.user() + ")"));

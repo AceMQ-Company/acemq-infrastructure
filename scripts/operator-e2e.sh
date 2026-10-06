@@ -14,8 +14,9 @@
 #
 #   1. cutover   a backlog on blue with a consumer attached; a Cutover is
 #                planned, an approval for the wrong plan is refused, the right
-#                one runs it. Every message is accounted for: acked by the
-#                consumer on blue, or on green.
+#                one runs it. Every message is accounted for by id: handled by
+#                the consumer on blue, or on green, or both — the atLeastOnce
+#                duplicate, counted and held to what the close step reported.
 #   2. rollback  a second Cutover, completed, then spec.action: rollback. The
 #                estate ends where it started.
 #   3. restart   the operator pod is killed (no grace) while the drain step
@@ -293,15 +294,39 @@ wait_phase e2e-cutover Completed 300
 for _ in $(seq 1 60); do
   [[ "$(k -n "$NS" get pod consumer -o jsonpath='{.status.phase}')" =~ Succeeded|Failed ]] && break; sleep 1
 done
-ACKED=$(k -n "$NS" logs consumer | sed -n 's/^final acked=//p')
+HANDLED=$(k -n "$NS" logs consumer | sed -n 's/^final handled=//p')
+HANDLED_IDS=$(k -n "$NS" logs consumer | sed -n 's/^final ids=//p')
 GREEN=$(depth green); BLUE=$(depth blue)
-echo "  published $PUBLISHED; acked on blue $ACKED; on green $GREEN; left on blue $BLUE"
-expect "the consumer was closed by the cutover" "$([[ -n "$ACKED" ]] && echo yes)" yes
+echo "  published $PUBLISHED; handled on blue $HANDLED; on green $GREEN; left on blue $BLUE"
+expect "the consumer was closed by the cutover" "$([[ -n "$HANDLED" ]] && echo yes)" yes
 expect "blue is drained" "$BLUE" 0
 expect "blue has no consumers" "$(consumers blue)" 0
-expect "every message accounted for (acked + green)" "$((ACKED + GREEN))" "$PUBLISHED"
+# atLeastOnce, measured rather than assumed: nothing lost, and what was
+# duplicated no more than the close step said it could be. The duplicate is the
+# message the consumer was handling when the close landed: once the broker has
+# sent connection.close it discards the ack, so the message is requeued, moved
+# by the drain and on green as well. Nothing can tell it apart from one never
+# handled, so it is counted rather than expected away.
+GREEN_IDS=$(client ids green "$QUEUE")
+expect "every message on green listed" "$(jq length <<<"$GREEN_IDS")" "$GREEN"
+ACCOUNT=$(jq -n --argjson p "$PUBLISHED" --argjson handled "$HANDLED_IDS" --argjson green "$GREEN_IDS" '
+  ($handled + $green) as $all
+  | {missing: ([range(0; $p)] - $all | length),
+     duplicated: ($all | length) - ($all | unique | length),
+     ids: ($all | group_by(.) | map(select(length > 1)[0])),
+     last: ($handled | last),
+     unknown: ($all | unique | map(select(. < 0 or . >= $p)) | length)}')
+DUPLICATED=$(jq .duplicated <<<"$ACCOUNT")
+BOUND=$(journal e2e-cutover | jq -r '.steps[] | select(.id=="drain-consumers") | .lines[]' \
+  | sed -n 's/^\([0-9][0-9]*\) delivered on blue and not settled.*/\1/p')
+echo "  duplicated $DUPLICATED (handled on blue and on green): ids $(jq -c .ids <<<"$ACCOUNT")," \
+  "the last handled on blue $(jq .last <<<"$ACCOUNT"); the close step said at most '$BOUND'"
+expect "no message lost (every published id handled on blue or on green)" "$(jq .missing <<<"$ACCOUNT")" 0
+expect "no message invented" "$(jq .unknown <<<"$ACCOUNT")" 0
+expect "the close step reported what it could duplicate" "$([[ "$BOUND" =~ ^[0-9]+$ ]] && echo yes)" yes
+expect "duplicates within what the close step reported" "$(( DUPLICATED <= BOUND ))" 1
 expect "journal outcome" "$(field e2e-cutover journalOutcome)" completed
-RUN1="published=$PUBLISHED acked-on-blue=$ACKED moved-to-green=$GREEN blue-after=$BLUE"
+RUN1="published=$PUBLISHED handled-on-blue=$HANDLED moved-to-green=$GREEN duplicated=$DUPLICATED close-bound=$BOUND blue-after=$BLUE"
 
 # ------------------------------------------------------------------ 2. rollback
 

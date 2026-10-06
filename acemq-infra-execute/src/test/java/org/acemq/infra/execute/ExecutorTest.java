@@ -121,6 +121,34 @@ class ExecutorTest {
         }
 
         @Test
+        void saysWhatTheCloseCanDuplicateBeforeClosing() {
+            // Closed at once, as scripts/operator-e2e does: what the consumers hold unsettled is
+            // requeued and moved, and any of it already handled -- its ack still on the wire -- is
+            // handled again on green. That bound is the number the e2e checks its duplicates
+            // against, so the step has to print it. Without the pause step, the close's reading is
+            // the first blue is asked for.
+            String closedAtOnce = Deployments.BLUE_GREEN
+                    .replaceFirst("\\n\\s*after:\\n\\s*unacked: 0\\n\\s*timeout: 5m"
+                            + "\\n\\s*onTimeout: abort", "")
+                    .replaceFirst("\\n\\s*- id: pause-producers\\n\\s*waitFor:\\n\\s*on: blue"
+                            + "\\n\\s*publishRate: 0\\n\\s*timeout: 2m\\n\\s*onTimeout: prompt", "");
+            Run.Builder builder = settled(Deployments.file(closedAtOnce));
+            blue.readings.clear();
+            blue.readings.add(new Observation(Reading.of(0), Reading.of(5), Reading.of(1),
+                    Reading.of(0)));
+            blue.readings.add(RecordingBroker.idle());
+
+            Execution execution = Executor.execute(builder.cutover());
+
+            assertThat(execution.steps().stream().map(Execution.Taken::id))
+                    .doesNotContain("pause-producers");
+            assertThat(execution.outcome()).isEqualTo(Execution.Outcome.COMPLETED);
+            assertThat(line(execution, "drain-consumers"))
+                    .contains("5 delivered on blue and not settled as the close began")
+                    .contains("processed twice");
+        }
+
+        @Test
         void derivesARollbackThatSwitchesBackFirstAndThenDrainsTheOtherWay() {
             Execution execution = Executor.execute(
                     settled(Deployments.blueGreen()).cutover());

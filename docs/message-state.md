@@ -44,6 +44,21 @@ A message that has been delivered to a consumer but not yet acknowledged is
 owned by that consumer, on blue. Close the connection and the broker requeues it
 **on blue** — not on green, because green has never heard of it.
 
+Requeued includes the message a consumer is *finishing*. The broker closes a
+connection by sending `connection.close`, and from then on it discards every
+frame but `close-ok`, as AMQP 0-9-1 requires. A consumer busy in its handler
+reads the close only when it next looks: by then it has done the work and sent
+the ack, the broker has thrown the ack away, and the message is back on blue
+already handled. Nothing tells it apart from one nobody touched — the drain
+moves it and green hands it out again. For a consumer that is busy when the
+close lands that is nearly always one message per channel, not a rare race, and
+no ordering of steps removes it from a forced close: it is the irreducible part
+of `atLeastOnce`. The close step therefore
+prints, just before it closes, how many deliveries were unsettled on blue —
+the most it can duplicate, read from the management statistics and so up to
+five seconds old. The kind end-to-end run counts its duplicates by message id
+and holds them to that number, rather than expecting none.
+
 So closing everything at once is the worst available move. It maximises the
 requeue storm, maximises what the shovel then has to move, and maximises the
 duplicate count, all at the moment when the estate is least able to absorb any
