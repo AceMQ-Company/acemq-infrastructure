@@ -312,7 +312,7 @@ expect "every message on green listed" "$(jq length <<<"$GREEN_IDS")" "$GREEN"
 ACCOUNT=$(jq -n --argjson p "$PUBLISHED" --argjson handled "$HANDLED_IDS" --argjson green "$GREEN_IDS" '
   ($handled + $green) as $all
   | {missing: ([range(0; $p)] - $all | length),
-     duplicated: ($all | length) - ($all | unique | length),
+     duplicated: (($all | length) - ($all | unique | length)),
      ids: ($all | group_by(.) | map(select(length > 1)[0])),
      last: ($handled | last),
      unknown: ($all | unique | map(select(. < 0 or . >= $p)) | length)}')
