@@ -111,6 +111,12 @@ def purge(cluster, queue):
         pass
 
 
+def consuming(cluster):
+    """Connections the management API shows consuming, joined as the close step joins them."""
+    print(len({channel["connection_details"]["name"] for channel in management(cluster, "/channels")
+               if channel.get("consumer_count", 0) > 0 and channel.get("connection_details")}))
+
+
 def shovels(cluster):
     print(len(management(cluster, "/shovels")))
 

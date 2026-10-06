@@ -269,13 +269,14 @@ reset_queues
 client publish blue "$QUEUE" "$PUBLISHED"
 client_pod consumer Never python -u /client.py consume blue "$QUEUE"
 k -n "$NS" wait --for=condition=Ready pod/consumer --timeout=2m >/dev/null
-# Until the management API reports the consumer, and one statistics interval
-# more for its channel: the close step finds consuming connections through the
-# channel statistics, and an operator quick enough off the mark (the native
-# image is) otherwise closes nothing and the unacked wait aborts the run.
+# Until the management API's channel statistics show it too: the close step
+# finds consuming connections there, not on the queue, and an operator quick
+# enough off the mark (the native image is) otherwise closes nothing and the
+# unacked wait aborts the run. A fixed six seconds was not always enough.
 for _ in $(seq 1 60); do [[ "$(consumers blue)" == 1 ]] && break; sleep 1; done
 expect "the consumer is attached" "$(consumers blue)" 1
-sleep 6
+for _ in $(seq 1 60); do [[ "$(client consuming blue)" == 1 ]] && break; sleep 1; done
+expect "and its channel shows consuming in the statistics" "$(client consuming blue)" 1
 cutover e2e-cutover
 wait_phase e2e-cutover Planned 180
 PLAN=$(field e2e-cutover planFingerprint)

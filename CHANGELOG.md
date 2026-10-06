@@ -28,7 +28,12 @@ credentials only to allowed hosts and refuses hook endpoints by default.
   requeues the message and the drain moves it to green. Counting acks hid this
   whenever the client noticed the close before its ack returned, which was most
   runs. It now accounts by message id: nothing lost, nothing unknown, and the
-  duplicates no more than the close step reported — one, on every local run. [Message state](docs/message-state.md) names the case.
+  duplicates no more than the close step reported — one, on every local run.
+  [Message state](docs/message-state.md) names the case.
+- **The kind end-to-end run could start its cutover before the consumer showed
+  in the channel statistics**, which the close step reads, so on the native
+  image it closed nothing and aborted. It waited a fixed six seconds; it now
+  waits until the management API shows the channel consuming.
 
 ## [0.7.0] - 2026-10-04
 
