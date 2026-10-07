@@ -22,7 +22,9 @@ cluster**. That is what this is for.
 > rather than against the jar on every push. `0.5.0` drives the rollback through
 > the binary too, from the journal `apply` keeps. `0.6.0` ships
 > [the operator](operator.md), with its image on GHCR. `0.7.0` adds a native
-> operator image and closes the operator's credential and hook gaps. See
+> operator image and closes the operator's credential and hook gaps. `0.7.1`
+> has a `closeConnections` step print how many unsettled deliveries it may
+> duplicate. See
 > [installing it](install.md).
 
 ## The pages

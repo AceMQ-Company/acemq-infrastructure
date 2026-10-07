@@ -37,7 +37,8 @@ clusters**.
 > with its image on GHCR for linux/amd64 and linux/arm64. `0.7.0` adds a native
 > operator image, keeps journals a deleted Cutover still needs, and has the
 > operator read only labelled Secrets, send credentials only to allowed hosts,
-> and refuse hook endpoints unless told otherwise.
+> and refuse hook endpoints unless told otherwise. `0.7.1` has a `closeConnections`
+> step print how many unsettled deliveries it may duplicate.
 > See [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
 > the build order and [the library](docs/library.md) for what exists today.
 
