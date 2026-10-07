@@ -109,7 +109,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: operator
-          image: ghcr.io/acemq-company/acemq-infra-operator:0.7.0
+          image: ghcr.io/acemq-company/acemq-infra-operator:0.7.1
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAMESPACE

@@ -4,11 +4,13 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.7.0` is released: the operator as a native image too, journals that outlive
-their Cutover, and an operator that reads only labelled Secrets, sends
-credentials only to allowed hosts and refuses hook endpoints by default.
+`0.7.1` is released: a cutover's `closeConnections` step says how many
+deliveries it can duplicate, and the kind end-to-end run accounts by message id
+rather than expecting no duplicates.
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-10-07
 
 ### Added
 

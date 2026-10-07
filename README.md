@@ -189,7 +189,7 @@ A single executable, no JVM, about 30MB, starting in roughly ten milliseconds.
 provenance checks, and the GitHub Action.
 
 ```console
-$ VERSION=0.7.0 PLATFORM=linux-amd64
+$ VERSION=0.7.1 PLATFORM=linux-amd64
 $ BASE=https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION
 $ curl -fsSLO "$BASE/acemq-infra-$VERSION-$PLATFORM" && curl -fsSLO "$BASE/SHA256SUMS"
 $ grep " acemq-infra-$VERSION-$PLATFORM$" SHA256SUMS | sha256sum -c -
@@ -199,7 +199,7 @@ $ chmod +x "acemq-infra-$VERSION-$PLATFORM" && sudo mv "acemq-infra-$VERSION-$PL
 From a pipeline, with nothing installed:
 
 ```yaml
-- uses: AceMQ-Company/acemq-infrastructure@v0.7.0
+- uses: AceMQ-Company/acemq-infrastructure@v0.7.1
   with:
     command: plan
     file: deployment.yaml

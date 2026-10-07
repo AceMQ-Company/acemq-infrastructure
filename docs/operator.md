@@ -21,14 +21,14 @@ linux/amd64 and linux/arm64, from `0.6.0` on. Both manifests are attached to
 the release, and the `operator.yaml` there names that release's image:
 
 ```console
-$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.7.0/crd.yaml
-$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.7.0/operator.yaml
+$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.7.1/crd.yaml
+$ kubectl apply -f https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v0.7.1/operator.yaml
 ```
 
 The image carries build provenance; check it before you run it:
 
 ```console
-$ gh attestation verify oci://ghcr.io/acemq-company/acemq-infra-operator:0.7.0 \
+$ gh attestation verify oci://ghcr.io/acemq-company/acemq-infra-operator:0.7.1 \
     --repo AceMQ-Company/acemq-infrastructure
 ```
 
