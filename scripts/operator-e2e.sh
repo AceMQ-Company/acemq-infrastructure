@@ -361,9 +361,15 @@ wait_phase e2e-restart Planned 180
 OLD_POD=$(k -n "$OPERATOR_NS" get pod -l app.kubernetes.io/name=acemq-infra-operator -o jsonpath='{.items[0].metadata.name}')
 approve e2e-restart "$(field e2e-restart planFingerprint)"
 AT_KILL=""
+# Killed once the drain has declared its shovel, not merely started: the step
+# writes the journal twice, "started" and then the shovel under movements, and
+# a kill between the two snapshots a journal the old operator is still about to
+# write. After the declaration nothing is written until the step ends, so the
+# journal read here is the one the kill leaves.
 for _ in $(seq 1 1200); do
   AT_KILL=$(journal e2e-restart 2>/dev/null || true)
-  if [[ -n "$AT_KILL" ]] && jq -e '.steps[] | select(.id=="drain-messages" and .status=="started")' <<<"$AT_KILL" >/dev/null; then
+  if [[ -n "$AT_KILL" ]] && jq -e 'any(.steps[]; .id=="drain-messages" and .status=="started")
+      and any(.movements[]; .label | contains("-drain-"))' <<<"$AT_KILL" >/dev/null; then
     break
   fi
   AT_KILL=""
