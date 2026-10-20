@@ -38,7 +38,8 @@ clusters**.
 > operator image, keeps journals a deleted Cutover still needs, and has the
 > operator read only labelled Secrets, send credentials only to allowed hosts,
 > and refuse hook endpoints unless told otherwise. `0.7.1` has a `closeConnections`
-> step print how many unsettled deliveries it may duplicate.
+> step print how many unsettled deliveries it may duplicate. `0.7.2` builds on
+> `acemq-java-rabbitmq-admin` 0.2.0, which hashes passwords before sending them.
 > See [installing it](docs/install.md). And see [the roadmap](docs/roadmap.md) for
 > the build order and [the library](docs/library.md) for what exists today.
 
@@ -190,7 +191,7 @@ A single executable, no JVM, about 30MB, starting in roughly ten milliseconds.
 provenance checks, and the GitHub Action.
 
 ```console
-$ VERSION=0.7.1 PLATFORM=linux-amd64
+$ VERSION=0.7.2 PLATFORM=linux-amd64
 $ BASE=https://github.com/AceMQ-Company/acemq-infrastructure/releases/download/v$VERSION
 $ curl -fsSLO "$BASE/acemq-infra-$VERSION-$PLATFORM" && curl -fsSLO "$BASE/SHA256SUMS"
 $ grep " acemq-infra-$VERSION-$PLATFORM$" SHA256SUMS | sha256sum -c -
@@ -200,7 +201,7 @@ $ chmod +x "acemq-infra-$VERSION-$PLATFORM" && sudo mv "acemq-infra-$VERSION-$PL
 From a pipeline, with nothing installed:
 
 ```yaml
-- uses: AceMQ-Company/acemq-infrastructure@v0.7.1
+- uses: AceMQ-Company/acemq-infrastructure@v0.7.2
   with:
     command: plan
     file: deployment.yaml

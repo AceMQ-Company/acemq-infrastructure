@@ -4,11 +4,33 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-`0.7.1` is released: a cutover's `closeConnections` step says how many
-deliveries it can duplicate, and the kind end-to-end run accounts by message id
-rather than expecting no duplicates.
+`0.7.2` is released: it builds on `acemq-java-rabbitmq-admin` 0.2.0, and a
+release's feed push retries when another release got there first.
 
 ## [Unreleased]
+
+## [0.7.2] - 2026-10-20
+
+### Changed
+
+- **`acemq-java-rabbitmq-admin` 0.1.2 → 0.2.0.** Its `createUser` now hashes
+  the password locally with RabbitMQ's salted SHA-256 and sends only
+  `password_hash`, so the plaintext no longer crosses the wire. This tool
+  creates users only in its integration tests; nothing it does in a cutover
+  changes.
+- **A release's feed push retries** when another release pushed to the same
+  feed repository first: it catches up and tries again, up to five times with a
+  short random backoff, then fails loudly.
+
+### Fixed
+
+- **The operator restart end-to-end could fail its journal check** when the
+  kill landed after `drain-messages` declared its shovel, because that step
+  writes the journal a second time. The kill now waits for the declared shovel.
+- **The attribution guard turned every squash-merged Dependabot pull request
+  red.** The one co-author trailer GitHub adds for `dependabot[bot]`, matched to
+  its exact address, is now allowed; any other still fails.
+
 
 ## [0.7.1] - 2026-10-07
 

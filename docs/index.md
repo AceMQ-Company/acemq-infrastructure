@@ -24,7 +24,8 @@ cluster**. That is what this is for.
 > [the operator](operator.md), with its image on GHCR. `0.7.0` adds a native
 > operator image and closes the operator's credential and hook gaps. `0.7.1`
 > has a `closeConnections` step print how many unsettled deliveries it may
-> duplicate. See
+> duplicate. `0.7.2` builds on `acemq-java-rabbitmq-admin` 0.2.0, which hashes
+> passwords before sending them. See
 > [installing it](install.md).
 
 ## The pages
